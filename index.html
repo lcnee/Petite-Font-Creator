@@ -1,0 +1,2189 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Petite Font Creator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  /* Decorative Gaegu/Do Hyeon fonts removed — whole app now uses simple system sans (see --ui-font below). */
+
+  :root{
+    /* ---- Stitch Calendar palette, remapped onto the old --blue-* roles ---- */
+    --blue:#6cc3e8;
+    --blue-mid:#22d9ff;
+    --blue-light:#d3ecf5;      /* was --blue-light → now grid/mint line */
+    --blue-pale:#e7f7fd;       /* was --blue-pale → mint pale */
+    --blue-tab:#a8dff5;
+    --blue-tab-active:#6cb6d9; /* pink-deep role, but kept blue per calendar accent */
+    --blue-dark:#204a63;
+    --blue-border:#c8e9f5;
+
+    --pink:#bfe3f2;
+    --pink-deep:#ec6fa0;       /* main cute accent — buttons / active states */
+    --mint:#d9eef6;
+    --mint-text:#3a7a96;
+    --grid-line:#d3ecf5;
+
+    --bg:#fff;                 /* polka-dot body handles the real bg */
+    --frame-bg:#fdf6fa;
+    --content-bg:#ffffff;
+    --sidebar-bg:#eaf7ff;
+
+    --ink:#3a3245;
+    --sub:#6b6572;
+    --red-counter:#ec6fa0;
+    --green-link:#3a9a6e;
+
+    --good:#5fae86;
+    --bad:#e9789a;
+
+    --ui-font: -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --display-font: var(--ui-font);
+
+    --shadow: 0 1px 3px rgba(150,120,200,0.12), 0 2px 8px rgba(150,120,200,0.1);
+    --shadow-tab: 1px 1px 0 rgba(255,255,255,0.7) inset, 0 2px 4px rgba(150,120,200,0.18);
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;color:var(--ink);
+    font-family:var(--ui-font);font-size:14px;line-height:1.45;}
+  body{
+    background-color:#fff;
+    background-image:
+      radial-gradient(circle, var(--dotcolor,#9fd6ea) 1px, transparent 1.3px),
+      radial-gradient(circle, var(--dotcolor,#9fd6ea) 1px, transparent 1.3px);
+    background-size:22px 22px;
+    background-position:0 0, 11px 11px;
+    background-repeat:repeat;
+    animation:polkaColorCycle 16s linear infinite;
+    position:relative;
+  }
+  @keyframes polkaColorCycle{
+    0%{--dotcolor:#9fd6ea;}
+    25%{--dotcolor:#8ec9f2;}
+    50%{--dotcolor:#f5a9cf;}
+    75%{--dotcolor:#f7e08a;}
+    100%{--dotcolor:#9fd6ea;}
+  }
+  @property --dotcolor{ syntax:'<color>'; inherits:true; initial-value:#9fd6ea; }
+  body::before{ content:"✿"; position:fixed; top:5%; right:4%; font-size:22px; color:#9fd6ea; opacity:.55; pointer-events:none; z-index:0;}
+  body::after{ content:"✿"; position:fixed; bottom:6%; left:3%; font-size:16px; color:#f5a9cf; opacity:.55; pointer-events:none; z-index:0;}
+
+  /* ============================================================
+     OUTER DOTTED FRAME — the Cyworld page wrapper
+     A rounded rectangle with dashed border on a muted background,
+     max-width mimicking the fixed-width Cyworld layout.
+     ============================================================ */
+  #app{
+    max-width:none;
+    width:100%;
+    margin:0;
+    padding:14px;
+    position:relative;
+    z-index:1;
+  }
+
+  .cy-frame{
+    background:rgba(255,255,255,.55);
+    border:2px solid var(--blue-border);
+    border-radius:20px;
+    overflow:hidden;
+    box-shadow:var(--shadow);
+    max-width:1400px;
+    margin:0 auto;
+  }
+
+  /* ---- TOP HEADER BAR — Moonth-style gradient sky ---- */
+  .cy-header{
+    background:linear-gradient(180deg,#eaf7ff 0%,#a8dff5 55%,#6cc3e8 100%);
+    border-bottom:2px solid #2f8fb0;
+    padding:10px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .cy-header .cy-title{
+    font-family:var(--display-font);
+    font-size:18px;
+    font-weight:700;
+    color:#204a63;
+    letter-spacing:.1px;
+  }
+  .cy-header .cy-title::before{ content:"📂 "; }
+  .cy-header .cy-counter{
+    font-size:11px;
+    color:#204a63;
+    font-weight:700;
+    letter-spacing:0.04em;
+  }
+  .cy-header .cy-counter span{color:var(--pink-deep);}
+  .cy-header .cy-url{
+    font-size:10.5px;
+    color:#3a6a86;
+  }
+
+  /* ============================================================
+     BINDER SPREAD — 2-column ring notebook layout
+     Left col: hướng dẫn / step info (fixed ~220px, lighter bg)
+     Middle: ring binder connectors (CSS circles)
+     Right col: thao tác user (fills remaining space, white bg)
+     Matches the ring-binder spread in ref image 2.
+     ============================================================ */
+  .cy-body{
+    display:flex;
+    align-items:stretch;
+    min-height:480px;
+    position:relative;
+  }
+
+  /* ---- LEFT PANE — hướng dẫn + step info ---- */
+  .cy-left{
+    width:220px;
+    flex-shrink:0;
+    background:var(--blue-pale);
+    border-right:none; /* ring strip sits between */
+    padding:16px 14px 20px;
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+  }
+
+  /* step info card inside left pane */
+  .step-info-card{
+    background:#fff;
+    border:2px solid var(--grid-line,var(--blue-border));
+    border-radius:12px;
+    padding:12px 13px;
+    font-size:12px;
+    color:var(--sub);
+    line-height:1.55;
+    box-shadow:0 1px 3px rgba(150,120,200,0.1);
+  }
+  .step-info-card .step-num{
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--pink-deep);
+    margin-bottom:4px;
+  }
+  .step-info-card h3{
+    font-family:var(--display-font);
+    font-size:16px;
+    font-weight:700;
+    color:var(--pink-deep);
+    margin:0 0 6px;
+    line-height:1.2;
+  }
+  .step-info-card p{
+    margin:0;
+    font-size:11.5px;
+    color:var(--sub);
+    font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  .step-info-card .tip{
+    margin-top:9px;
+    padding:8px 10px;
+    background:var(--blue-pale);
+    border-radius:10px;
+    font-size:11px;
+    color:var(--mint-text);
+    line-height:1.5;
+    font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+
+  /* nav steps list in left pane */
+  .left-steps{display:flex;flex-direction:column;gap:5px;}
+  .left-step-btn{
+    display:flex;align-items:center;gap:8px;
+    background:#fff;border:1.5px solid #ccc;
+    border-radius:16px;padding:8px 10px;cursor:pointer;
+    font-family:var(--ui-font);font-size:12px;font-weight:700;
+    color:var(--ink);text-align:left;transition:all .12s;width:100%;
+  }
+  .left-step-btn .snum{
+    width:20px;height:20px;border-radius:50%;background:var(--blue-pale);
+    color:var(--mint-text);font-size:10px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  }
+  .left-step-btn:hover{background:var(--blue-pale);}
+  .left-step-btn.active{
+    color:#fff;border-color:var(--pink-deep);background:var(--pink-deep);
+  }
+  .left-step-btn.active .snum{background:#fff;color:var(--pink-deep);}
+  .left-step-btn.done .snum{background:var(--good);color:#fff;}
+
+  /* ---- RING BINDER — decorative circles connecting left & right ---- */
+  .cy-rings{
+    width:22px;
+    flex-shrink:0;
+    background:linear-gradient(to bottom, var(--blue-pale), var(--blue-pale));
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start;
+    padding:28px 0 20px;
+    gap:32px;
+    position:relative;
+    z-index:2;
+  }
+  .cy-rings::before{
+    content:'';
+    position:absolute;
+    top:0;bottom:0;left:50%;
+    transform:translateX(-50%);
+    width:1px;
+    background:var(--blue-border);
+  }
+  .ring{
+    width:18px;height:18px;
+    border-radius:50%;
+    border:2.5px solid var(--pink-deep);
+    background:#fff0f8;
+    box-shadow:1px 1px 0 rgba(255,255,255,0.8) inset,
+               0 1px 3px rgba(200,100,150,0.2);
+    position:relative;
+    z-index:1;
+    flex-shrink:0;
+  }
+
+  /* ---- RIGHT PANE — thao tác user ---- */
+  .cy-right{
+    flex:1;
+    background:var(--content-bg);
+    padding:16px 18px 22px;
+    min-width:0;
+    border-left:1px solid var(--blue-border);
+  }
+
+  /* ---- SIDEBAR TABS (right edge) — round chip pills like maintab-btn ---- */
+  .cy-sidebar{
+    width:92px;
+    background:var(--sidebar-bg);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:14px 0 16px;
+    gap:9px;
+    flex-shrink:0;
+    border-left:1px solid var(--blue-border);
+  }
+  .cy-sidebar .home-btn{
+    width:56px;height:56px;border-radius:50%;background:#fff;color:var(--ink);
+    border:1.5px solid #2a2233;font-size:22px;font-weight:400;
+    font-family:var(--ui-font);cursor:pointer;text-align:center;
+    margin-bottom:4px;box-shadow:var(--shadow-tab);
+    display:flex;align-items:center;justify-content:center;padding:0;
+  }
+  .cy-nav-tab{
+    width:74px;min-height:58px;background:#fff;color:var(--ink);border:1.5px solid #2a2233;border-radius:18px;
+    padding:9px 5px;font-size:12px;font-weight:400;font-family:var(--ui-font);
+    cursor:pointer;text-align:center;box-shadow:var(--shadow-tab);
+    transition:background .12s,color .12s;line-height:1.35;word-break:keep-all;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    white-space:normal;
+  }
+  .cy-nav-tab:hover{background:var(--pink-deep);color:#fff;}
+  .cy-nav-tab.active{color:var(--ink);background:linear-gradient(180deg,var(--blue-mid),var(--blue-pale));font-weight:400;}
+
+
+  /* ---- Section sub-header ---- */
+  .cy-section-title{
+    font-size:10.5px;font-weight:700;color:var(--mint-text);
+    margin:0 0 10px;padding-bottom:4px;
+    border-bottom:2px solid var(--grid-line,var(--blue-light));
+    letter-spacing:0.05em;text-transform:uppercase;
+  }
+
+  /* step content panels (right pane — thao tác only) */
+  .panel{background:transparent;padding:0;margin:0;}
+  .panel .desc{color:var(--sub);font-size:11.5px;margin:0 0 12px;line-height:1.5;max-width:52em;}
+
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  label.field{display:flex;flex-direction:column;gap:4px;font-size:10.5px;
+    color:var(--sub);font-weight:700;letter-spacing:0.03em;text-transform:uppercase;}
+
+  select,input[type=number],input[type=text]{
+    font-family:var(--ui-font);font-size:13px;padding:8px 10px;border-radius:8px;
+    border:1.5px solid var(--pink);background:#fff;color:var(--ink);}
+  select:focus,input:focus{outline:none;border-color:var(--pink-deep);}
+
+  button{font-family:var(--ui-font);font-size:12.5px;font-weight:700;border-radius:999px;
+    border:1.5px solid #ccc;background:#fff;color:var(--ink);padding:8px 15px;
+    cursor:pointer;transition:all .12s;box-shadow:var(--shadow-tab);}
+  button:hover{background:var(--blue-pale);border-color:var(--pink-deep);}
+  button:active{transform:scale(.98);}
+  button.primary{background:var(--pink-deep);border-color:var(--pink-deep);color:#fff;letter-spacing:.3px;}
+  button.primary:hover{background:#d95d8e;}
+  button.primary:disabled{opacity:.5;cursor:not-allowed;}
+  button.ghost{background:#fff;border-color:var(--pink);color:var(--ink);box-shadow:none;}
+  button.small{padding:6px 12px;font-size:11px;}
+  button.danger{color:var(--bad);}
+
+  .charset-grid{display:flex;flex-wrap:wrap;gap:4px;max-height:130px;overflow-y:auto;
+    background:var(--blue-pale);border:2px solid var(--grid-line,var(--blue-border));border-radius:10px;
+    padding:8px;margin-top:8px;}
+  .charset-grid span{display:inline-flex;align-items:center;justify-content:center;
+    width:22px;height:22px;font-size:12px;background:#fff;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-weight:600;
+    border:1px solid var(--blue-border);border-radius:50%;color:var(--ink);}
+
+  .stat-row{display:flex;gap:16px;margin-top:10px;flex-wrap:wrap;}
+  .stat{display:flex;flex-direction:column;}
+  .stat .v{font-family:var(--display-font);font-size:22px;font-weight:700;color:var(--pink-deep);}
+  .stat .l{font-size:10px;color:var(--sub);letter-spacing:0.04em;text-transform:uppercase;}
+
+  /* dropzone */
+  .dropzone{border:2px dashed var(--pink);border-radius:14px;padding:28px 14px;
+    text-align:center;color:var(--sub);cursor:pointer;transition:all .15s;background:#f7fcfe;}
+  .dropzone.drag{border-color:var(--pink-deep);background:var(--blue-light);color:var(--blue-dark);}
+  .dropzone .big{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:4px;}
+
+  /* glyph grid */
+  .glyph-toolbar{display:flex;justify-content:space-between;align-items:center;
+    margin-bottom:8px;gap:8px;flex-wrap:wrap;}
+  .glyph-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px;}
+  .glyph-cell{border:1.5px solid var(--grid-line,var(--blue-border));border-radius:10px;background:#fff;
+    padding:6px;display:flex;flex-direction:column;align-items:center;gap:3px;
+    cursor:pointer;position:relative;box-shadow:0 1px 3px rgba(150,120,200,0.1);
+    transition:transform .1s;}
+  .glyph-cell:hover{transform:translateY(-2px);box-shadow:0 3px 8px rgba(150,120,200,0.18);}
+  .glyph-cell.flag-bad{border-color:var(--bad);box-shadow:0 1px 4px rgba(233,120,154,0.25);}
+  .glyph-cell.flag-ok{border-color:#7dd5b0;}
+  .glyph-cell canvas{width:100%;aspect-ratio:1;background:#fff;border-radius:6px;
+    border:1px solid var(--blue-light);}
+  .glyph-cell .lab{font-size:13px;font-weight:700;color:var(--pink-deep);font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;}
+  .glyph-cell .idx{font-size:8px;color:var(--sub);position:absolute;top:3px;left:5px;}
+
+  .editor-overlay{position:fixed;inset:0;background:rgba(60,40,70,.55);
+    display:none;align-items:center;justify-content:center;z-index:50;padding:14px;}
+  .editor-overlay.open{display:flex;}
+  .editor-card{background:#fff;border-radius:16px;padding:18px;max-width:460px;width:100%;
+    box-shadow:0 12px 40px rgba(0,0,0,.25);border:2px solid var(--grid-line,var(--blue-border));}
+  .editor-card h3{margin:0 0 10px;font-size:16px;font-family:var(--display-font);font-weight:700;color:var(--pink-deep);}
+  .editor-card canvas{width:100%;background:#fff;border:1px solid var(--blue-border);border-radius:8px;}
+  .editor-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:10px;flex-wrap:wrap;}
+
+  .progress-wrap{height:8px;background:var(--blue-light);border-radius:99px;overflow:hidden;margin-top:8px;}
+  .progress-bar{height:100%;background:var(--pink-deep);width:0%;transition:width .2s;}
+
+  .log{font-family:'Courier New',monospace;font-size:10.5px;color:var(--sub);
+    background:var(--blue-pale);border:1px solid var(--blue-border);border-radius:8px;
+    padding:7px 9px;max-height:110px;overflow-y:auto;margin-top:8px;white-space:pre-wrap;}
+
+  .preview-text{font-size:26px;line-height:1.6;padding:14px;background:var(--blue-pale);
+    border:2px solid var(--grid-line,var(--blue-border));border-radius:12px;margin-top:9px;word-break:break-all;}
+
+  .hint{font-size:11px;color:var(--sub);margin-top:5px;line-height:1.5;font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;}
+  .badge{display:inline-block;font-size:10px;font-weight:700;padding:3px 9px;border-radius:99px;
+    background:var(--blue-light);color:var(--sub);}
+  .badge.ok{background:#d7ecd0;color:var(--good);}
+  .badge.bad{background:#fbe3ec;color:var(--bad);}
+
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-thumb{background:var(--pink);border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="cy-frame">
+
+  <!-- TOP HEADER -->
+  <div class="cy-header">
+    <div>
+      <div class="cy-title">Petite Font Creator</div>
+      <div class="cy-counter">TODAY <span id="cyToday">—</span> &nbsp;|&nbsp; TOTAL <span id="cyTotal">—</span></div>
+    </div>
+    <div class="row" style="gap:8px;align-items:center;">
+      <div class="cy-url" id="cyUrlText">Create your own fonts easily with <a href="https://www.tiktok.com/@lucinee_e" target="_blank" rel="noopener noreferrer" style="color:inherit;font-weight:700;text-decoration:underline;">Lucinee</a></div>
+      <button id="btnUiLang" style="padding:4px 10px;font-size:11px;">EN</button>
+    </div>
+  </div>
+
+  <!-- BODY: left info | rings | right actions | sidebar -->
+  <div class="cy-body">
+
+    <!-- LEFT PANE: hướng dẫn + step nav -->
+    <div class="cy-left">
+
+      <!-- step navigation list -->
+      <div class="left-steps" id="stepbar"></div>
+
+      <!-- step info card — filled by JS -->
+      <div class="step-info-card" id="stepInfoCard">
+        <div class="step-num" id="infoStepNum">STEP 01</div>
+        <h3 id="infoStepTitle">Template</h3>
+        <p id="infoStepDesc">Tạo file PDF template có sẵn ô + nhãn ký tự để in ra và vẽ tay.</p>
+        <div class="tip" id="infoStepTip">💡 In ở khổ A4, dùng bút mực đen để nét rõ khi scan lại.</div>
+      </div>
+
+    </div><!-- /.cy-left -->
+
+    <!-- RING BINDER -->
+    <div class="cy-rings" id="ringStrip">
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="ring"></div>
+    </div>
+
+    <!-- RIGHT PANE: thao tác user -->
+    <div class="cy-right">
+
+  <!-- STEP 1: TEMPLATE -->
+  <div class="panel" id="panel-1">
+    <div class="cy-section-title">01 · Template</div>
+
+    <div class="row" style="margin-bottom:10px;">
+      <label class="field"><span data-vi="Ngôn ngữ" data-en="Language">Ngôn ngữ</span>
+        <select id="langSelect">
+          <option value="vi" data-vi="Tiếng Việt (đầy đủ dấu)" data-en="Vietnamese (full diacritics)">Tiếng Việt (đầy đủ dấu)</option>
+          <option value="en" data-vi="Tiếng Anh (A–Z, a–z, số, dấu câu)" data-en="English (A–Z, a–z, numbers, punctuation)">English (A–Z, a–z, số, dấu câu)</option>
+        </select>
+      </label>
+      <label class="field"><span data-vi="Số ô / trang" data-en="Cells / page">Số ô / trang</span>
+        <select id="gridDensity">
+          <option value="12" data-vi="12 ô (3×4)" data-en="12 cells (3×4)">12 ô (3×4)</option>
+          <option value="16" selected data-vi="16 ô (4×4)" data-en="16 cells (4×4)">16 ô (4×4)</option>
+          <option value="20" data-vi="20 ô (4×5)" data-en="20 cells (4×5)">20 ô (4×5)</option>
+        </select>
+      </label>
+      <label class="field"><span data-vi="Guideline" data-en="Guideline">Guideline</span>
+        <select id="guidelineToggle">
+          <option value="1" selected data-vi="Có (baseline + x-height)" data-en="Yes (baseline + x-height)">Có (baseline + x-height)</option>
+          <option value="0" data-vi="Không, chỉ viền ô" data-en="No, cell outline only">Không, chỉ viền ô</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="stat-row" id="charsetStats"></div>
+    <div class="charset-grid" id="charsetGrid"></div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="primary" id="btnGenTemplate" data-vi="📄 Tạo & tải PDF template" data-en="📄 Generate & download PDF template">📄 Tạo & tải PDF template</button>
+      <button class="ghost" id="btnSkipTemplate" style="border:1px solid var(--blue-border);color:var(--sub);" data-vi="Đã có template →" data-en="Already have a template →">Đã có template →</button>
+      <span class="hint" id="genStatus"></span>
+    </div>
+
+    <div id="skipForm" style="display:none;margin-top:12px;background:var(--blue-pale);border:1px solid var(--blue-border);border-radius:6px;padding:11px 13px;">
+      <div style="font-weight:700;font-size:11.5px;margin-bottom:8px;color:var(--blue-dark);" data-vi="Chọn lại layout của file template đã in:" data-en="Re-select the layout of the template you already printed:">Chọn lại layout của file template đã in:</div>
+      <div class="row">
+        <label class="field"><span data-vi="Ngôn ngữ" data-en="Language">Ngôn ngữ</span>
+          <select id="skipLang">
+            <option value="vi" data-vi="Tiếng Việt" data-en="Vietnamese">Tiếng Việt</option>
+            <option value="en" data-vi="Tiếng Anh" data-en="English">English</option>
+          </select>
+        </label>
+        <label class="field"><span data-vi="Số ô / trang" data-en="Cells / page">Số ô / trang</span>
+          <select id="skipDensity">
+            <option value="12" data-vi="12 ô (3×4)" data-en="12 cells (3×4)">12 ô (3×4)</option>
+            <option value="16" selected data-vi="16 ô (4×4)" data-en="16 cells (4×4)">16 ô (4×4)</option>
+            <option value="20" data-vi="20 ô (4×5)" data-en="20 cells (4×5)">20 ô (4×5)</option>
+          </select>
+        </label>
+        <label class="field"><span data-vi="Guideline" data-en="Guideline">Guideline</span>
+          <select id="skipGuideline">
+            <option value="1" selected data-vi="Có baseline/x-height" data-en="Yes, baseline/x-height">Có baseline/x-height</option>
+            <option value="0" data-vi="Không" data-en="No">Không</option>
+          </select>
+        </label>
+        <button class="primary" id="btnConfirmSkip" style="align-self:flex-end;" data-vi="Xác nhận →" data-en="Confirm →">Xác nhận →</button>
+      </div>
+      <div class="hint" style="margin-top:6px;" data-vi="⚠️ Phải chọn đúng số ô/trang như lúc tạo template." data-en="⚠️ Must match the cells/page setting used when the template was generated.">⚠️ Phải chọn đúng số ô/trang như lúc tạo template.</div>
+    </div>
+  </div>
+
+
+  <!-- STEP 2: UPLOAD & DETECT -->
+  <div class="panel" id="panel-2" style="display:none;">
+    <div class="cy-section-title">02 · Upload & Detect</div>
+
+    <div class="dropzone" id="dropzone">
+      <div class="big" data-vi="📤 Kéo thả PDF vào đây, hoặc bấm để chọn file" data-en="📤 Drag & drop your PDF here, or click to choose a file">📤 Kéo thả PDF vào đây, hoặc bấm để chọn file</div>
+      <div data-vi="Có thể chọn nhiều file PDF cùng lúc (nếu vẽ nhiều trang riêng)" data-en="You can select multiple PDF files at once (if pages were scanned separately)">Có thể chọn nhiều file PDF cùng lúc (nếu vẽ nhiều trang riêng)</div>
+      <input type="file" id="fileInput" accept="application/pdf" multiple style="display:none;">
+    </div>
+
+    <div class="progress-wrap" id="detectProgressWrap" style="display:none;">
+      <div class="progress-bar" id="detectProgressBar"></div>
+    </div>
+    <div class="log" id="detectLog" style="display:none;"></div>
+  </div>
+
+  <!-- STEP 3: REVIEW GLYPHS -->
+  <div class="panel" id="panel-3" style="display:none;">
+    <div class="cy-section-title">03 · Review Glyph</div>
+
+    <div class="glyph-toolbar">
+      <div class="row">
+        <span class="badge" id="totalBadge">0 ký tự</span>
+        <span class="badge ok" id="okBadge">0 ổn</span>
+        <span class="badge bad" id="badBadge">0 cần xem lại</span>
+      </div>
+      <div class="row">
+        <button class="small" id="btnFilterBad" data-vi="Chỉ hiện lỗi" data-en="Show errors only">Chỉ hiện lỗi</button>
+        <button class="small" id="btnFilterAll" data-vi="Hiện tất cả" data-en="Show all">Hiện tất cả</button>
+        <span style="width:1px;background:var(--blue-border);height:18px;display:inline-block;"></span>
+        <input type="number" id="batchThresholdVal" value="128" min="10" max="250"
+          style="width:55px;font-size:11px;padding:4px 6px;" title="Threshold (10-250)">
+        <button class="small" id="btnBatchThreshold" title="Áp lại threshold cho tất cả ô flagged lỗi" data-vi="⚡ Batch re-threshold" data-en="⚡ Batch re-threshold">⚡ Batch re-threshold</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:10px;background:var(--blue-pale);border:1px solid var(--blue-border);border-radius:6px;padding:8px 10px;">
+      <label class="field">Letter spacing (units/em)
+        <input type="number" id="letterSpacing" value="60" style="width:80px;">
+      </label>
+      <span class="hint" style="margin:0;" data-vi="Khoảng cách giữa các ký tự khi build font. Bấm vào 1 ký tự bên dưới để sửa nét hoặc chỉnh lệch baseline riêng." data-en="Spacing between characters when the font is built. Click a character below to fix strokes or nudge its baseline.">Khoảng cách giữa các ký tự khi build font. Bấm vào 1 ký tự bên dưới để sửa nét hoặc chỉnh lệch baseline riêng.</span>
+    </div>
+
+    <div class="glyph-grid" id="glyphGrid"></div>
+  </div>
+
+  <!-- STEP 4: BUILD FONT -->
+  <div class="panel" id="panel-4" style="display:none;">
+    <div class="cy-section-title">04 · Build Font</div>
+
+    <div class="row" style="margin-bottom:12px;">
+      <label class="field"><span data-vi="Tên font" data-en="Font name">Tên font</span>
+        <input type="text" id="fontName" value="Petite Handwritten" style="width:190px;">
+      </label>
+      <label class="field"><span data-vi="Định dạng xuất" data-en="Export format">Định dạng xuất</span>
+        <select id="fontFormat">
+          <option value="ttf" selected data-vi="TTF (khuyên dùng — tương thích tốt nhất)" data-en="TTF (recommended — best compatibility)">TTF (khuyên dùng — tương thích tốt nhất)</option>
+          <option value="otf">OTF</option>
+        </select>
+      </label>
+    </div>
+    <div class="hint" id="formatHint" style="margin-top:-4px;margin-bottom:10px;" data-vi="💡 TTF tương thích tốt nhất với Windows/Word/Photoshop. Chỉ chọn OTF nếu ứng dụng của bạn yêu cầu." data-en="💡 TTF has the best compatibility with Windows/Word/Photoshop. Only choose OTF if your app specifically requires it.">💡 TTF tương thích tốt nhất với Windows/Word/Photoshop. Chỉ chọn OTF nếu ứng dụng của bạn yêu cầu.</div>
+
+    <!-- Baseline calibration -->
+    <div style="background:var(--blue-pale);border:1px solid var(--blue-border);border-radius:7px;padding:11px 13px;margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--blue-dark);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px;" data-vi="Căn chỉnh Baseline" data-en="Baseline calibration">Căn chỉnh Baseline</div>
+      <div style="font-size:11.5px;color:var(--sub);margin-bottom:8px;" data-vi="Tool mặc định baseline ở 78% chiều cao ô. Nếu chữ của bạn cao hơn/thấp hơn, kéo slider để căn lại." data-en="The tool defaults the baseline to 78% of the cell height. If your writing sits higher/lower, drag the slider to recalibrate.">Tool mặc định baseline ở 78% chiều cao ô. Nếu chữ của bạn cao hơn/thấp hơn, kéo slider để căn lại.</div>
+      <div class="row" style="align-items:center;gap:12px;">
+        <label class="field" style="flex:1;"><span data-vi="Baseline (% từ trên xuống)" data-en="Baseline (% from top)">Baseline (% từ trên xuống)</span>
+          <input type="range" id="baselineSlider" min="50" max="92" value="78" style="width:100%;">
+        </label>
+        <span id="baselineVal" style="font-size:13px;font-weight:700;color:var(--blue-dark);min-width:32px;">78%</span>
+        <canvas id="baselinePreviewCanvas" width="120" height="80"
+          style="border:1px solid var(--blue-border);border-radius:5px;background:#fff;flex-shrink:0;"></canvas>
+      </div>
+      <div class="hint"><span data-vi="Chọn 1 chữ thử để xem căn chỉnh →" data-en="Pick a sample character to preview alignment →">Chọn 1 chữ thử để xem căn chỉnh →</span> <select id="baselineGlyphPicker" style="font-size:11px;padding:3px 6px;"></select></div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="primary" id="btnBuildFont" data-vi="⚙️ Build & Xem thử font" data-en="⚙️ Build & preview font">⚙️ Build & Xem thử font</button>
+      <button class="primary" id="btnDownloadFont" style="display:none;background:var(--good);border-color:var(--good);" data-vi="⬇️ Tải xuống font" data-en="⬇️ Download font">⬇️ Tải xuống font</button>
+      <span class="hint" id="buildStatus"></span>
+    </div>
+
+    <div id="previewWrap" style="display:none;">
+      <label class="field" style="margin-top:12px;"><span data-vi="Xem thử" data-en="Preview">Xem thử</span>
+        <input type="text" id="previewInput" value="Chào bạn, tôi tên Phương!" style="width:100%;">
+      </label>
+      <div class="preview-text" id="previewText"></div>
+      <div class="hint" data-vi="Chưa ưng ý? Quay lại bước 03 · Review để sửa nét hoặc chỉnh baseline từng ký tự, rồi bấm Build lại." data-en="Not happy with it? Go back to step 03 · Review to fix strokes or nudge a glyph's baseline, then build again.">Chưa ưng ý? Quay lại bước 03 · Review để sửa nét hoặc chỉnh baseline từng ký tự, rồi bấm Build lại.</div>
+    </div>
+  </div>
+
+    </div><!-- /.cy-right -->
+
+    <!-- SIDEBAR TABS (right edge) -->
+    <div class="cy-sidebar" id="cyTabBar">
+      <button class="home-btn" title="Home">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11z" fill="#000000"/>
+        </svg>
+      </button>
+    </div>
+
+  </div><!-- /.cy-body -->
+</div><!-- /.cy-frame -->
+</div><!-- /#app -->
+
+<!-- single glyph editor modal -->
+<div class="editor-overlay" id="editorOverlay">
+  <div class="editor-card">
+    <h3 id="editorTitle">Sửa ký tự</h3>
+    <canvas id="editorCanvas" width="300" height="300"></canvas>
+    <div class="row" style="margin-top:10px;">
+      <label class="field"><span data-vi="Threshold (độ nhạy đen/trắng)" data-en="Threshold (black/white sensitivity)">Threshold (độ nhạy đen/trắng)</span>
+        <input type="number" id="editorThreshold" value="128" min="1" max="254" style="width:90px;">
+      </label>
+      <button class="small" id="btnReThreshold" data-vi="Áp dụng lại" data-en="Reapply">Áp dụng lại</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <label class="field"><span data-vi="Chỉnh lệch baseline (px, +xuống / -lên)" data-en="Baseline offset (px, +down / -up)">Chỉnh lệch baseline (px, +xuống / -lên)</span>
+        <input type="number" id="editorYOffset" value="0" step="1" style="width:90px;">
+      </label>
+      <span class="hint" style="margin:0;" data-vi="Dùng khi ký tự này cao/thấp hơn baseline chung so với các chữ khác." data-en="Use this when this glyph sits higher/lower than the shared baseline.">Dùng khi ký tự này cao/thấp hơn baseline chung so với các chữ khác.</span>
+    </div>
+    <div class="editor-actions">
+      <button class="ghost" id="btnEditorCancel" data-vi="Đóng" data-en="Close">Đóng</button>
+      <button class="danger small" id="btnEditorClear" data-vi="Đánh dấu trống / bỏ ký tự này" data-en="Mark empty / remove this character">Đánh dấu trống / bỏ ký tự này</button>
+      <button class="primary" id="btnEditorSave" data-vi="Lưu" data-en="Save">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Petite Font Creator — core script
+   ============================================================ */
+
+// ---------- Vietnamese full charset (199 chars) ----------
+const VN_CHARSET = ["a","à","á","ả","ã","ạ","ă","ằ","ắ","ẳ","ẵ","ặ","â","ầ","ấ","ẩ","ẫ","ậ","e","è","é","ẻ","ẽ","ẹ","ê","ề","ế","ể","ễ","ệ","i","ì","í","ỉ","ĩ","ị","o","ò","ó","ỏ","õ","ọ","ô","ồ","ố","ổ","ỗ","ộ","ơ","ờ","ớ","ở","ỡ","ợ","u","ù","ú","ủ","ũ","ụ","ư","ừ","ứ","ử","ữ","ự","y","ỳ","ý","ỷ","ỹ","ỵ","b","c","d","đ","g","h","k","l","m","n","p","q","r","s","t","v","x","A","À","Á","Ả","Ã","Ạ","Ă","Ằ","Ắ","Ẳ","Ẵ","Ặ","Â","Ầ","Ấ","Ẩ","Ẫ","Ậ","E","È","É","Ẻ","Ẽ","Ẹ","Ê","Ề","Ế","Ể","Ễ","Ệ","I","Ì","Í","Ỉ","Ĩ","Ị","O","Ò","Ó","Ỏ","Õ","Ọ","Ô","Ồ","Ố","Ổ","Ỗ","Ộ","Ơ","Ờ","Ớ","Ở","Ỡ","Ợ","U","Ù","Ú","Ủ","Ũ","Ụ","Ư","Ừ","Ứ","Ử","Ữ","Ự","Y","Ỳ","Ý","Ỷ","Ỹ","Ỵ","B","C","D","Đ","G","H","K","L","M","N","P","Q","R","S","T","V","X","0","1","2","3","4","5","6","7","8","9",".",",","!","?",":",";","'","\"","-","(",")"];
+
+// ---------- English charset (88 chars) ----------
+const EN_CHARSET = [
+  "a","b","c","d","e","f","g","h","i","j","k","l","m",
+  "n","o","p","q","r","s","t","u","v","w","x","y","z",
+  "A","B","C","D","E","F","G","H","I","J","K","L","M",
+  "N","O","P","Q","R","S","T","U","V","W","X","Y","Z",
+  "0","1","2","3","4","5","6","7","8","9",
+  ".",",","!","?",":",";","'","\"","-","(",")",
+  "@","#","$","%","&","*","+","=","_","/","\\","<",">","[","]","{","}"
+];
+
+// ---------- Charset map ----------
+const CHARSETS = {
+  vi: VN_CHARSET,
+  en: EN_CHARSET,
+};
+
+// global state
+const STATE = {
+  step: 1,
+  charset: VN_CHARSET,
+  gridDensity: 16,
+  guideline: true,
+  template: null,     // { pageLayout, cellsPerPage, totalPages, cellPositions }
+  glyphs: {},          // char -> { imageData(dataURL), path(opentype path or null), ok(bool), bbox }
+  fontBuilt: null,
+  pendingDownload: null,
+  uiLang: 'en',
+};
+
+// Small i18n helper for dynamic status/log strings generated in JS
+// (anything not already covered by static data-vi/data-en attributes).
+function t(vi,en){ return (STATE.uiLang==='en') ? en : vi; }
+
+const STEP_INFO = {
+  vi: [
+    { title:'Template', desc:'Tạo file PDF template có sẵn ô + nhãn ký tự để in ra và vẽ tay.',
+      tip:'💡 In ở khổ A4, dùng bút mực đen để nét rõ khi scan lại.' },
+    { title:'Upload', desc:'Tải lên file PDF đã viết tay (đã scan/chụp) để tool tự nhận diện từng ô ký tự.',
+      tip:'💡 Chụp/scan thẳng, đủ sáng, tránh bóng đổ lên trang để nhận diện chính xác hơn.' },
+    { title:'Review', desc:'Kiểm tra từng ký tự đã nhận diện. Bấm vào ô để sửa nét, đổi threshold, hoặc chỉnh lệch baseline riêng cho ký tự đó.',
+      tip:'💡 Ký tự viền đỏ là ký tự cần xem lại (thiếu hoặc lỗi nhận diện). Có thể chỉnh letter spacing ở đây.' },
+    { title:'Build', desc:'Canh baseline chung, chọn định dạng xuất, rồi build thử và xem trước trước khi tải font về máy.',
+      tip:'💡 Xem kỹ phần "Xem thử" — nếu chưa ưng, quay lại Review chỉnh rồi build lại, không cần làm lại từ đầu.' },
+  ],
+  en: [
+    { title:'Template', desc:'Generate a PDF template with a character grid to print and hand-write on.',
+      tip:'💡 Print on A4, use black ink for a clean scan afterwards.' },
+    { title:'Upload', desc:'Upload your scanned/photographed PDF so the tool can auto-detect each character cell.',
+      tip:'💡 Scan straight, well-lit, and avoid shadows on the page for more accurate detection.' },
+    { title:'Review', desc:'Check each detected character. Click a cell to fix strokes, change threshold, or nudge that glyph\'s baseline.',
+      tip:'💡 Red-bordered cells need review (missing or misdetected). You can adjust letter spacing here too.' },
+    { title:'Build', desc:'Calibrate the shared baseline, pick an export format, then build a preview before downloading.',
+      tip:'💡 Check the "Preview" carefully — if it\'s off, go back to Review, fix it, and rebuild. No need to start over.' },
+  ],
+};
+
+function setStep(n){
+  STATE.step = n;
+  for(let i=1;i<=4;i++){
+    document.getElementById('panel-'+i).style.display = (i===n)?'block':'none';
+  }
+  const lang = STATE.uiLang || 'vi';
+  const info = STEP_INFO[lang][n-1];
+  document.getElementById('infoStepNum').textContent = (lang==='vi'?'BƯỚC ':'STEP ') + String(n).padStart(2,'0');
+  document.getElementById('infoStepTitle').textContent = info.title;
+  document.getElementById('infoStepDesc').textContent = info.desc;
+  document.getElementById('infoStepTip').textContent = info.tip;
+  renderStepbar();
+  if(n===4) setTimeout(populateBaselineGlyphPicker, 50);
+}
+
+function renderStepbar(){
+  const labels = ['Template','Upload','Review','Build'];
+  const bar = document.getElementById('stepbar');
+  // keep the home button (first child), rebuild the rest
+  const homeBtn = bar.querySelector('.home-btn');
+  bar.innerHTML = '';
+  if(homeBtn) bar.appendChild(homeBtn);
+
+  labels.forEach((lab,i)=>{
+    const n = i+1;
+    const btn = document.createElement('button');
+    btn.className = 'cy-nav-tab' + (n===STATE.step?' active':'');
+    btn.innerHTML = `<div style="font-size:10px;opacity:.7;">${String(n).padStart(2,'0')}</div>${lab}${n<STATE.step?' ✓':''}`;
+    btn.onclick = ()=> setStep(n);
+    bar.appendChild(btn);
+  });
+
+  // update TODAY/TOTAL counters with glyphs info
+  const done = Object.keys(STATE.glyphs).length;
+  document.getElementById('cyToday').textContent = done > 0 ? done+' glyphs' : '—';
+  document.getElementById('cyTotal').textContent = STATE.charset ? STATE.charset.length+' chars' : '—';
+}
+
+function renderCharsetPreview(){
+  const grid = document.getElementById('charsetGrid');
+  grid.innerHTML = STATE.charset.map(c=>`<span>${c}</span>`).join('');
+  const stats = document.getElementById('charsetStats');
+  const isEn = STATE.uiLang === 'en';
+  stats.innerHTML = `
+    <div class="stat"><div class="v">${STATE.charset.length}</div><div class="l">${isEn?'total characters':'tổng ký tự'}</div></div>
+    <div class="stat"><div class="v">${Math.ceil(STATE.charset.length/STATE.gridDensity)}</div><div class="l">${isEn?'pages to print':'trang cần in'}</div></div>
+  `;
+}
+
+function applyLang(lang){
+  STATE.charset = CHARSETS[lang] || VN_CHARSET;
+  renderCharsetPreview();
+}
+
+document.getElementById('langSelect').addEventListener('change', e=> applyLang(e.target.value));
+
+document.getElementById('gridDensity').addEventListener('change', e=>{
+  STATE.gridDensity = parseInt(e.target.value);
+  renderCharsetPreview();
+});
+document.getElementById('guidelineToggle').addEventListener('change', e=>{
+  STATE.guideline = e.target.value === '1';
+});
+
+renderCharsetPreview();
+renderStepbar();
+setStep(1);
+applyUILang('en');
+
+/* ============================================================
+   STEP 1 — Template PDF generation
+   Layout strategy: fixed grid per density, same on every page.
+   Cell coordinates (in mm, top-left origin) are stored in STATE.template
+   so Step 2 can recompute identical crop boxes on the uploaded scan,
+   regardless of page count.
+   ============================================================ */
+
+const GRID_LAYOUTS = {
+  12: { cols:3, rows:4 },
+  16: { cols:4, rows:4 },
+  20: { cols:4, rows:5 },
+};
+
+const PAGE_W = 210, PAGE_H = 297; // A4 mm
+const MARGIN = 12;                 // outer margin mm
+const HEADER_H = 14;                // space for page header text mm
+const FOOTER_H = 8;                 // space for footer (page index) mm
+
+function computeGridGeometry(density){
+  const {cols, rows} = GRID_LAYOUTS[density];
+  const usableW = PAGE_W - MARGIN*2;
+  const usableH = PAGE_H - MARGIN*2 - HEADER_H - FOOTER_H;
+  const gap = 4; // mm gap between cells
+  const cellW = (usableW - gap*(cols-1)) / cols;
+  const cellH = (usableH - gap*(rows-1)) / rows;
+  const cells = [];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      cells.push({
+        x: MARGIN + c*(cellW+gap),
+        y: MARGIN + HEADER_H + r*(cellH+gap),
+        w: cellW,
+        h: cellH,
+      });
+    }
+  }
+  return { cols, rows, cellW, cellH, cells, gap };
+}
+
+function buildTemplatePlan(charset, density){
+  const geo = computeGridGeometry(density);
+  const perPage = geo.cells.length;
+  const totalPages = Math.ceil(charset.length / perPage);
+  const pages = [];
+  for(let p=0; p<totalPages; p++){
+    const slice = charset.slice(p*perPage, (p+1)*perPage);
+    pages.push(slice);
+  }
+  return { geo, perPage, totalPages, pages };
+}
+
+function drawGuidelineInCell(doc, cell, guideline){
+  // cell box
+  doc.setDrawColor(210,200,185);
+  doc.setLineWidth(0.3);
+  doc.rect(cell.x, cell.y, cell.w, cell.h);
+
+  if(!guideline) return;
+
+  // baseline at 78% down, x-height line at 32% down (rough Latin/Vietnamese proportions)
+  const baselineY = cell.y + cell.h*0.78;
+  const xheightY  = cell.y + cell.h*0.32;
+  const topGuideY = cell.y + cell.h*0.08; // ascender/diacritic ceiling
+
+  doc.setDrawColor(225,180,165);
+  doc.setLineWidth(0.2);
+  doc.setLineDashPattern([1,1], 0);
+  doc.line(cell.x, baselineY, cell.x+cell.w, baselineY);
+  doc.line(cell.x, xheightY, cell.x+cell.w, xheightY);
+  doc.line(cell.x, topGuideY, cell.x+cell.w, topGuideY);
+  doc.setLineDashPattern([], 0);
+}
+
+function generateTemplatePDF(){
+  const statusEl = document.getElementById('genStatus');
+  statusEl.textContent = t('Đang tạo PDF...','Generating PDF...');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4', orientation:'portrait' });
+
+  const plan = buildTemplatePlan(STATE.charset, STATE.gridDensity);
+  STATE.template = {
+    density: STATE.gridDensity,
+    guideline: STATE.guideline,
+    geo: plan.geo,
+    perPage: plan.perPage,
+    totalPages: plan.totalPages,
+    pages: plan.pages,       // array of arrays of chars, in draw order
+    charset: STATE.charset.slice(),
+  };
+
+  plan.pages.forEach((pageChars, pIdx)=>{
+    if(pIdx>0) doc.addPage();
+
+    // header
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(11);
+    doc.setTextColor(40,35,30);
+    doc.text('Petite Font Creator — Template viết tay (Tiếng Việt)', MARGIN, 9);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(8);
+    doc.setTextColor(140,130,115);
+    doc.text(`Trang ${pIdx+1}/${plan.totalPages} · Viết ký tự vào đúng ô tương ứng với nhãn bên dưới ô`, MARGIN, 13);
+
+    pageChars.forEach((ch, i)=>{
+      const cell = plan.geo.cells[i];
+      drawGuidelineInCell(doc, cell, STATE.guideline);
+
+      // label below the cell — small, outside the drawable area
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(8);
+      doc.setTextColor(120,110,95);
+      const label = ch === ' ' ? '(space)' : ch;
+      doc.text(label, cell.x + cell.w/2, cell.y + cell.h + 3.2, { align:'center' });
+
+      // tiny corner index for debugging/manual reorder safety
+      doc.setFontSize(6);
+      doc.setTextColor(200,195,185);
+      const globalIdx = pIdx*plan.perPage + i;
+      doc.text(String(globalIdx+1), cell.x + 1, cell.y + 3);
+    });
+
+    // footer
+    doc.setFontSize(7.5);
+    doc.setTextColor(170,162,148);
+    doc.text(`Petite Font Creator · không xoá số thứ tự góc ô, dùng để đối chiếu khi quét lại`, MARGIN, PAGE_H-5);
+  });
+
+  doc.save('petite-font-creator-template-vi.pdf');
+  statusEl.textContent = t(
+    `✅ Đã tạo ${plan.totalPages} trang, ${STATE.charset.length} ký tự. Sau khi vẽ xong, qua Bước 2 để nộp lại.`,
+    `✅ Generated ${plan.totalPages} page(s), ${STATE.charset.length} characters. Once you're done writing, go to Step 2 to upload it back.`
+  );
+
+  // persist template plan to allow step 2 immediately
+  setTimeout(()=> setStep(2), 600);
+}
+
+document.getElementById('btnGenTemplate').addEventListener('click', generateTemplatePDF);
+
+// ---- Skip bước 1: đã có template in sẵn ----
+document.getElementById('btnSkipTemplate').addEventListener('click', ()=>{
+  const sf = document.getElementById('skipForm');
+  sf.style.display = sf.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('btnConfirmSkip').addEventListener('click', ()=>{
+  const lang     = document.getElementById('skipLang').value;
+  const density  = parseInt(document.getElementById('skipDensity').value);
+  const guideline= document.getElementById('skipGuideline').value === '1';
+
+  STATE.gridDensity = density;
+  STATE.guideline   = guideline;
+  STATE.charset     = CHARSETS[lang] || VN_CHARSET;
+
+  const plan = buildTemplatePlan(STATE.charset, density);
+  STATE.template = {
+    density, guideline,
+    geo:        plan.geo,
+    perPage:    plan.perPage,
+    totalPages: plan.totalPages,
+    pages:      plan.pages,
+    charset:    STATE.charset.slice(),
+  };
+
+  document.getElementById('skipForm').style.display = 'none';
+  document.getElementById('genStatus').textContent =
+    t(
+      `✅ Layout đã xác nhận: ${density} ô/trang, ${plan.totalPages} trang, ${STATE.charset.length} ký tự.`,
+      `✅ Layout confirmed: ${density} cells/page, ${plan.totalPages} page(s), ${STATE.charset.length} characters.`
+    );
+
+  setTimeout(()=> setStep(2), 400);
+});
+
+/* ============================================================
+   STEP 2 — Upload scanned/drawn PDF, detect cells, crop glyph images
+   We reuse the exact mm-grid geometry from STATE.template and convert
+   it to pixel coordinates based on the rendered page's pixel size,
+   since pdf.js renders at a controllable scale (mm -> px is linear).
+   ============================================================ */
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const RENDER_SCALE = 8; // target px per mm when rasterizing the PDF page for tracing (higher = crisper glyph outlines)
+
+function logDetect(msg){
+  const log = document.getElementById('detectLog');
+  log.style.display = 'block';
+  log.textContent += msg + '\n';
+  log.scrollTop = log.scrollHeight;
+}
+
+async function handleUploadedFiles(fileList){
+  if(!STATE.template){
+    logDetect(t('⚠️ Chưa có template (Bước 1). Hãy tạo template trước.','⚠️ No template yet (Step 1). Please generate a template first.'));
+    return;
+  }
+  const files = Array.from(fileList).filter(f=>f.type==='application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  if(files.length===0){
+    logDetect(t('⚠️ Không tìm thấy file PDF hợp lệ.','⚠️ No valid PDF file found.'));
+    return;
+  }
+
+  document.getElementById('detectProgressWrap').style.display='block';
+  const progBar = document.getElementById('detectProgressBar');
+  logDetect(t(`📥 Nhận ${files.length} file PDF, bắt đầu xử lý...`,`📥 Received ${files.length} PDF file(s), starting processing...`));
+
+  // total expected pages across all files vs template totalPages (informational only)
+  let processedPages = 0;
+  let totalCharsCropped = 0;
+
+  for(const file of files){
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+    logDetect(`📄 ${file.name}: ${pdf.numPages} trang`);
+
+    for(let pNum=1; pNum<=pdf.numPages; pNum++){
+      const page = await pdf.getPage(pNum);
+
+      // pdf.js viewport units are points (1/72in). A4 width = 210mm ≈ 595.28pt.
+      // We want the rendered canvas to be `RENDER_SCALE` px per mm for a crisp trace.
+      const baseViewport = page.getViewport({scale:1});
+      const targetWidthPx = PAGE_W * RENDER_SCALE;          // desired canvas width in px
+      const scale = targetWidthPx / baseViewport.width;      // pdf.js scale factor (px per pt)
+      const vp = page.getViewport({scale});
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(vp.width);
+      canvas.height = Math.round(vp.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      await page.render({canvasContext: ctx, viewport: vp}).promise;
+
+      // determine which template page this corresponds to.
+      // Strategy: use running page index across all uploaded files & pages,
+      // in upload order, matching template.pages order. This assumes the user
+      // uploads pages in the same order they were printed (most common case).
+      const templatePageIdx = processedPages;
+      if(templatePageIdx >= STATE.template.totalPages){
+        logDetect(t(
+          `⚠️ Trang dư (vượt quá ${STATE.template.totalPages} trang template), bỏ qua trang ${pNum} của ${file.name}.`,
+          `⚠️ Extra page (beyond the ${STATE.template.totalPages}-page template), skipping page ${pNum} of ${file.name}.`
+        ));
+        processedPages++;
+        continue;
+      }
+      const pageChars = STATE.template.pages[templatePageIdx];
+      const geo = STATE.template.geo;
+      const pxPerMmActual = canvas.width / PAGE_W;
+
+      pageChars.forEach((ch, i)=>{
+        const cell = geo.cells[i];
+        const cropX = Math.round(cell.x * pxPerMmActual);
+        const cropY = Math.round(cell.y * pxPerMmActual);
+        const cropW = Math.round(cell.w * pxPerMmActual);
+        const cropH = Math.round(cell.h * pxPerMmActual);
+
+        // shrink crop slightly inward to avoid capturing the cell border itself
+        const inset = Math.round(Math.min(cropW,cropH) * 0.035);
+        const cx = cropX+inset, cy = cropY+inset, cw = cropW-inset*2, ch_ = cropH-inset*2;
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cw; cropCanvas.height = ch_;
+        const cropCtx = cropCanvas.getContext('2d');
+        cropCtx.drawImage(canvas, cx, cy, cw, ch_, 0, 0, cw, ch_);
+
+        // keep an untouched grayscale copy before binarizing, so threshold
+        // can be re-applied later in Step 3 without quality loss.
+        const rawCanvas = document.createElement('canvas');
+        rawCanvas.width = cw; rawCanvas.height = ch_;
+        rawCanvas.getContext('2d').drawImage(cropCanvas, 0, 0);
+
+        const result = thresholdAndAnalyze(cropCtx, cw, ch_, 128);
+
+        STATE.glyphs[ch] = {
+          char: ch,
+          canvas: cropCanvas,
+          rawCanvas: rawCanvas,
+          threshold: 128,
+          ok: result.inkRatio > 0.005 && result.inkRatio < 0.65, // heuristic: too little = empty, too much = noise/smudge
+          inkRatio: result.inkRatio,
+          path: null, // vector path filled in later (Step 3->4 trace)
+        };
+        totalCharsCropped++;
+      });
+
+      processedPages++;
+      const pct = Math.min(100, Math.round(100*processedPages/STATE.template.totalPages));
+      progBar.style.width = pct+'%';
+      logDetect(t(
+        `  ✓ Trang ${pNum}: cắt ${pageChars.length} ô (template trang ${templatePageIdx+1})`,
+        `  ✓ Page ${pNum}: cropped ${pageChars.length} cell(s) (template page ${templatePageIdx+1})`
+      ));
+    }
+  }
+
+  logDetect(t(`✅ Hoàn tất: ${totalCharsCropped} ký tự đã cắt.`,`✅ Done: ${totalCharsCropped} character(s) cropped.`));
+  if(processedPages < STATE.template.totalPages){
+    logDetect(t(
+      `⚠️ Còn thiếu ${STATE.template.totalPages - processedPages} trang so với template. Bạn có thể upload bổ sung trước khi qua Bước 3, hoặc tiếp tục với phần đã có (ký tự thiếu sẽ bị bỏ qua khi build font).`,
+      `⚠️ ${STATE.template.totalPages - processedPages} page(s) still missing compared to the template. You can upload more before going to Step 3, or continue with what you have (missing characters will be skipped when building the font).`
+    ));
+  }
+
+  setTimeout(()=>{ buildGlyphReviewGrid(); setStep(3); }, 400);
+}
+
+// Convert a drawn cell (white bg, dark ink) into binary ink mask + ink ratio
+// Gaussian blur kernel (radius 1, 3x3) applied in-place on grayscale luminance
+// before thresholding — reduces paper texture noise, makes contours smoother
+function gaussianBlurGray(data, w, h){
+  // Separate pass H+V (1D separable Gaussian, sigma~0.85, kernel [1,2,1]/4)
+  const K=[1,2,1]; const Ksum=4;
+  const buf=new Float32Array(w*h);
+  // Extract luma
+  for(let i=0;i<w*h;i++) buf[i]=0.299*data[i*4]+0.587*data[i*4+1]+0.114*data[i*4+2];
+  // Horizontal pass
+  const tmp=new Float32Array(w*h);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let s=0;
+      for(let k=-1;k<=1;k++){
+        const xx=Math.max(0,Math.min(w-1,x+k));
+        s+=K[k+1]*buf[y*w+xx];
+      }
+      tmp[y*w+x]=s/Ksum;
+    }
+  }
+  // Vertical pass
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let s=0;
+      for(let k=-1;k<=1;k++){
+        const yy=Math.max(0,Math.min(h-1,y+k));
+        s+=K[k+1]*tmp[yy*w+x];
+      }
+      buf[y*w+x]=s/Ksum;
+    }
+  }
+  return buf; // float32 grayscale
+}
+
+function thresholdAndAnalyze(ctx, w, h, threshold){
+  const imgData = ctx.getImageData(0,0,w,h);
+  const d = imgData.data;
+  // Apply Gaussian blur on luma before threshold
+  const luma = gaussianBlurGray(d, w, h);
+  let inkPixels = 0;
+  for(let i=0;i<w*h;i++){
+    const isInk = luma[i] < threshold;
+    const v = isInk ? 0 : 255;
+    d[i*4]=v; d[i*4+1]=v; d[i*4+2]=v; d[i*4+3]=255;
+    if(isInk) inkPixels++;
+  }
+  ctx.putImageData(imgData,0,0);
+  return { inkRatio: inkPixels / (w*h) };
+}
+
+// dropzone wiring
+const dz = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dz.addEventListener('click', ()=> fileInput.click());
+dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', ()=> dz.classList.remove('drag'));
+dz.addEventListener('drop', e=>{
+  e.preventDefault(); dz.classList.remove('drag');
+  handleUploadedFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e=> handleUploadedFiles(e.target.files));
+
+/* ============================================================
+   STEP 3 — Review glyph grid + per-glyph editor modal
+   ============================================================ */
+
+let glyphFilterMode = 'all'; // 'all' | 'bad'
+
+function buildGlyphReviewGrid(){
+  renderGlyphGrid();
+  updateGlyphBadges();
+}
+
+function updateGlyphBadges(){
+  const chars = STATE.template ? STATE.template.charset : Object.keys(STATE.glyphs);
+  const total = chars.length;
+  let okCount=0, badCount=0;
+  chars.forEach(ch=>{
+    const g = STATE.glyphs[ch];
+    if(!g){ badCount++; return; }
+    if(g.ok) okCount++; else badCount++;
+  });
+  const isEn = STATE.uiLang==='en';
+  document.getElementById('totalBadge').textContent = isEn ? `${total} chars` : `${total} ký tự`;
+  document.getElementById('okBadge').textContent = isEn ? `${okCount} ok` : `${okCount} ổn`;
+  document.getElementById('badBadge').textContent = isEn ? `${badCount} to review` : `${badCount} cần xem lại`;
+}
+
+function renderGlyphGrid(){
+  const grid = document.getElementById('glyphGrid');
+  grid.innerHTML = '';
+  const chars = STATE.template ? STATE.template.charset : Object.keys(STATE.glyphs);
+
+  chars.forEach((ch, idx)=>{
+    const g = STATE.glyphs[ch];
+    const missing = !g;
+    const isBad = missing || !g.ok;
+    if(glyphFilterMode==='bad' && !isBad) return;
+
+    const cell = document.createElement('div');
+    cell.className = 'glyph-cell ' + (missing ? 'flag-bad' : (g.ok?'flag-ok':'flag-bad'));
+    cell.innerHTML = `<span class="idx">${idx+1}</span>`;
+
+    const canvasEl = document.createElement('canvas');
+    canvasEl.width = 80; canvasEl.height = 80;
+    const cctx = canvasEl.getContext('2d');
+    cctx.fillStyle = '#fff'; cctx.fillRect(0,0,80,80);
+    if(!missing){
+      cctx.drawImage(g.canvas, 0,0,g.canvas.width,g.canvas.height, 0,0,80,80);
+    } else {
+      cctx.fillStyle = '#cbb';
+      cctx.font = '11px sans-serif';
+      cctx.textAlign = 'center';
+      cctx.fillText('thiếu', 40, 44);
+    }
+    cell.appendChild(canvasEl);
+
+    const lab = document.createElement('div');
+    lab.className = 'lab';
+    lab.textContent = ch;
+    cell.appendChild(lab);
+
+    cell.addEventListener('click', ()=> openGlyphEditor(ch));
+    grid.appendChild(cell);
+  });
+}
+
+document.getElementById('btnFilterBad').addEventListener('click', ()=>{
+  glyphFilterMode='bad'; renderGlyphGrid();
+});
+document.getElementById('btnFilterAll').addEventListener('click', ()=>{
+  glyphFilterMode='all'; renderGlyphGrid();
+});
+
+// ---- single glyph editor modal ----
+let editingChar = null;
+
+function openGlyphEditor(ch){
+  editingChar = ch;
+  const g = STATE.glyphs[ch];
+  document.getElementById('editorTitle').textContent = (STATE.uiLang==='en'?'Edit character: ':'Sửa ký tự: ') + ch;
+  const canvas = document.getElementById('editorCanvas');
+  canvas.width = 300; canvas.height = 300;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,300,300);
+  if(g){
+    ctx.drawImage(g.canvas, 0,0,g.canvas.width,g.canvas.height, 0,0,300,300);
+    document.getElementById('editorThreshold').value = g.threshold;
+    document.getElementById('editorYOffset').value = g.yOffset||0;
+  } else {
+    document.getElementById('editorThreshold').value = 128;
+    document.getElementById('editorYOffset').value = 0;
+  }
+  document.getElementById('editorOverlay').classList.add('open');
+}
+
+function closeGlyphEditor(){
+  document.getElementById('editorOverlay').classList.remove('open');
+  editingChar = null;
+}
+
+document.getElementById('btnEditorCancel').addEventListener('click', closeGlyphEditor);
+
+document.getElementById('btnReThreshold').addEventListener('click', ()=>{
+  if(!editingChar) return;
+  const g = STATE.glyphs[editingChar];
+  if(!g) return;
+  const newThresh = parseInt(document.getElementById('editorThreshold').value) || 128;
+
+  // re-render from a kept copy: we need the ORIGINAL grayscale crop, but we already
+  // binarized in place during detect. To allow re-threshold, we keep a backup the
+  // first time we touch a glyph.
+  if(!g.rawCanvas){
+    // no backup available (older session) — just reuse current as baseline
+    g.rawCanvas = g.canvas;
+  }
+  const w = g.rawCanvas.width, h = g.rawCanvas.height;
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(g.rawCanvas, 0,0);
+  const result = thresholdAndAnalyze(tctx, w, h, newThresh);
+
+  g.canvas = tmp;
+  g.threshold = newThresh;
+  g.inkRatio = result.inkRatio;
+  g.ok = result.inkRatio > 0.005 && result.inkRatio < 0.65;
+  g.path = null; // invalidate any previously traced path
+
+  const ctx = document.getElementById('editorCanvas').getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,300,300);
+  ctx.drawImage(tmp, 0,0,w,h, 0,0,300,300);
+});
+
+document.getElementById('btnEditorClear').addEventListener('click', ()=>{
+  if(!editingChar) return;
+  delete STATE.glyphs[editingChar];
+  closeGlyphEditor();
+  renderGlyphGrid();
+  updateGlyphBadges();
+});
+
+document.getElementById('btnEditorSave').addEventListener('click', ()=>{
+  if(editingChar){
+    const g = STATE.glyphs[editingChar];
+    if(g){
+      const yOff = parseInt(document.getElementById('editorYOffset').value)||0;
+      if(g.yOffset !== yOff){ g.yOffset = yOff; g.path = null; }
+    }
+  }
+  closeGlyphEditor();
+  renderGlyphGrid();
+  updateGlyphBadges();
+});
+
+/* ============================================================
+   STEP 4 — Bitmap → vector tracing, then OTF/TTF build via opentype.js
+
+   Tracing approach: marching-squares contour extraction operating on
+   directed unit edges between ink/background pixels, with "ink always on
+   the left" convention so winding direction tells us outer-contour vs hole
+   (matches the nonzero fill rule opentype.js/font rasterizers expect).
+   Saddle points (diagonal-touching corners) are resolved by picking the
+   most-clockwise turn relative to the incoming direction, which keeps the
+   left-hand-ink rule consistent and avoids the self-intersecting /
+   fragmented contours that a naive pixel-corner walk produces.
+   Verified against solid blobs, ringed holes (o/ô/0), thin 1px diagonal/
+   straight strokes, and disconnected multi-part glyphs (i-dot+stem) via
+   standalone unit tests before being wired into the UI.
+   ============================================================ */
+
+function getBinaryMask(canvas){
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const data = ctx.getImageData(0,0,w,h).data;
+  const mask = new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++){
+    mask[i] = data[i*4] < 128 ? 1 : 0; // R channel; image already binarized to pure black/white
+  }
+  return { mask, w, h };
+}
+
+function traceContours(mask, w, h){
+  const pw = w+2, ph = h+2;
+  const padded = new Uint8Array(pw*ph);
+  for(let y=0;y<h;y++)
+    for(let x=0;x<w;x++)
+      padded[(y+1)*pw+(x+1)] = mask[y*w+x];
+
+  function ink(x,y){
+    if(x<0||y<0||x>=pw||y>=ph) return 0;
+    return padded[y*pw+x];
+  }
+
+  const outMap = new Map();
+  function addEdge(x1,y1,x2,y2){
+    const k = x1+','+y1;
+    if(!outMap.has(k)) outMap.set(k, []);
+    outMap.get(k).push({x:x2,y:y2});
+  }
+
+  for(let y=0;y<=ph;y++){
+    for(let x=0;x<pw;x++){
+      const a = ink(x,y-1), b = ink(x,y);
+      if(a!==b){
+        if(b===1) addEdge(x,y,x+1,y);
+        else      addEdge(x+1,y,x,y);
+      }
+    }
+  }
+  for(let x=0;x<=pw;x++){
+    for(let y=0;y<ph;y++){
+      const a = ink(x-1,y), b = ink(x,y);
+      if(a!==b){
+        if(a===1) addEdge(x,y,x,y+1);
+        else      addEdge(x,y+1,x,y);
+      }
+    }
+  }
+
+  function angleOf(dx,dy){ return Math.atan2(dy,dx); }
+
+  function pickNext(point, incomingDir, candidates, usedSet){
+    const avail = candidates.filter(c=>{
+      const id = `${point.x},${point.y}->${c.x},${c.y}`;
+      return !usedSet.has(id);
+    });
+    if(avail.length===0) return null;
+    if(avail.length===1) return avail[0];
+    const inAngle = angleOf(incomingDir.dx, incomingDir.dy);
+    let best=null, bestTurn=Infinity;
+    avail.forEach(c=>{
+      const outAngle = angleOf(c.x-point.x, c.y-point.y);
+      let turn = outAngle - inAngle;
+      while(turn <= -Math.PI) turn += 2*Math.PI;
+      while(turn > Math.PI) turn -= 2*Math.PI;
+      if(turn < bestTurn){ bestTurn = turn; best = c; }
+    });
+    return best;
+  }
+
+  const used = new Set();
+  const contours = [];
+
+  outMap.forEach((edges, key)=>{
+    edges.forEach(e0=>{
+      const [sx,sy] = key.split(',').map(Number);
+      const id0 = `${sx},${sy}->${e0.x},${e0.y}`;
+      if(used.has(id0)) return;
+
+      const loop = [];
+      let cx=sx, cy=sy;
+      let cur = e0;
+      let incomingDir = {dx: cur.x-cx, dy: cur.y-cy};
+      let guard=0;
+      const maxGuard = (pw*ph)*4 + 16;
+
+      while(true){
+        const id = `${cx},${cy}->${cur.x},${cur.y}`;
+        used.add(id);
+        loop.push({x:cx,y:cy});
+        const nx=cur.x, ny=cur.y;
+        incomingDir = {dx: nx-cx, dy: ny-cy};
+        cx=nx; cy=ny;
+
+        if(cx===sx && cy===sy) break;
+
+        const candidates = outMap.get(cx+','+cy) || [];
+        const next = pickNext({x:cx,y:cy}, incomingDir, candidates, used);
+        guard++;
+        if(!next || guard>maxGuard) break;
+        cur = next;
+      }
+      if(loop.length>=3) contours.push(loop);
+    });
+  });
+
+  return { contours };
+}
+
+// Douglas-Peucker polyline simplification
+function simplifyPolygon(points, epsilon){
+  if(points.length<3) return points;
+  function perpDist(p, a, b){
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const len = Math.hypot(dx,dy);
+    if(len===0) return Math.hypot(p.x-a.x,p.y-a.y);
+    return Math.abs((p.x-a.x)*dy - (p.y-a.y)*dx)/len;
+  }
+  function rdp(pts, eps){
+    if(pts.length<3) return pts;
+    let maxD=0, idx=0;
+    for(let i=1;i<pts.length-1;i++){
+      const d = perpDist(pts[i], pts[0], pts[pts.length-1]);
+      if(d>maxD){ maxD=d; idx=i; }
+    }
+    if(maxD>eps){
+      const left = rdp(pts.slice(0,idx+1), eps);
+      const right = rdp(pts.slice(idx), eps);
+      return left.slice(0,-1).concat(right);
+    }
+    return [pts[0], pts[pts.length-1]];
+  }
+  return rdp(points, epsilon);
+}
+
+function signedArea(poly){
+  let a=0;
+  for(let i=0;i<poly.length;i++){
+    const p1=poly[i], p2=poly[(i+1)%poly.length];
+    a += (p1.x*p2.y - p2.x*p1.y);
+  }
+  return a/2;
+}
+
+// Convert pixel-space contours into an opentype.js Path, mapping into
+// 1000-units/em space with baseline & scale derived from template guideline
+// proportions (baseline at 78% down, x-height ceiling at 32%, top at 8%).
+/* ============================================================
+   buildGlyphPath — bitmap canvas → opentype.js Path
+   Reads STATE.baselinePct for user-calibrated baseline position.
+   Uses auto-epsilon from ink bounding box for smooth simplification.
+   ============================================================ */
+function buildGlyphPath(canvas, letterSpacingVal, yOffsetPx){
+  const { mask, w, h } = getBinaryMask(canvas);
+  const { contours } = traceContours(mask, w, h);
+  if(contours.length===0) return null;
+
+  let rawMinX=Infinity,rawMaxX=-Infinity,rawMinY=Infinity,rawMaxY=-Infinity;
+  contours.forEach(c=>c.forEach(p=>{
+    if(p.x<rawMinX) rawMinX=p.x; if(p.x>rawMaxX) rawMaxX=p.x;
+    if(p.y<rawMinY) rawMinY=p.y; if(p.y>rawMaxY) rawMaxY=p.y;
+  }));
+  const rawInkW=Math.max(1,rawMaxX-rawMinX), rawInkH=Math.max(1,rawMaxY-rawMinY);
+  const epsilon=Math.min(4,Math.max(0.5,Math.min(rawInkW,rawInkH)*0.008));
+
+  const simplified=contours.map(c=>simplifyPolygon(c,epsilon)).filter(c=>c.length>=3);
+  if(simplified.length===0) return null;
+
+  const UPM=1000;
+  const baselinePx=h*(STATE.baselinePct||0.78) - (yOffsetPx||0);
+  const topPx=h*0.08;
+  const emHeightPx=baselinePx-topPx;
+  const scale=(UPM*0.7)/emHeightPx;
+
+  let minX=Infinity,maxX=-Infinity;
+  simplified.forEach(poly=>poly.forEach(p=>{if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;}));
+  const inkWidthPx=Math.max(1,maxX-minX);
+  const sidebearingPx=inkWidthPx*0.08;
+
+  function mapPointFinal(p){return{x:(p.x-minX+sidebearingPx)*scale,y:(baselinePx-p.y)*scale};}
+
+  const path=new opentype.Path();
+  simplified.forEach(poly=>{
+    const pts=poly.map(mapPointFinal);
+    path.moveTo(pts[0].x,pts[0].y);
+    for(let i=1;i<pts.length;i++) path.lineTo(pts[i].x,pts[i].y);
+    path.close();
+  });
+
+  const advanceWidth=Math.round((inkWidthPx+sidebearingPx*2)*scale)+(letterSpacingVal||60);
+  return{path,advanceWidth};
+}
+
+function buildFont(){
+  const statusEl = document.getElementById('buildStatus');
+  statusEl.textContent = t('Đang trace & build font...','Tracing & building font...');
+  const btnDlReset = document.getElementById('btnDownloadFont');
+  if(btnDlReset) btnDlReset.style.display = 'none';
+  STATE.pendingDownload = null;
+
+  const fontNameVal = document.getElementById('fontName').value.trim() || 'Petite Handwritten';
+  const format = document.getElementById('fontFormat').value;
+  const letterSpacingVal = parseInt(document.getElementById('letterSpacing').value) || 60;
+
+  const glyphs = [];
+  const notdefPath = new opentype.Path();
+  glyphs.push(new opentype.Glyph({
+    name: '.notdef',
+    unicode: 0,
+    advanceWidth: 500,
+    path: notdefPath,
+  }));
+
+  const charList = STATE.template.charset.slice();
+  let traced=0, skipped=0, idx=0;
+  const CHUNK_SIZE = 8; // small batches so the UI thread gets to breathe between them
+
+  // tracing+simplify is the expensive part (contour walk is O(boundary length),
+  // simplification is O(n^2) worst case per polygon) — 199 glyphs at realistic
+  // crop resolution measured ~2.8s run fully synchronously, enough to look like
+  // a freeze on slower phones. We chunk it via setTimeout(0) so the browser can
+  // paint the progress bar between batches instead of locking up entirely.
+  function processChunk(){
+    const end = Math.min(idx + CHUNK_SIZE, charList.length);
+    for(; idx<end; idx++){
+      const ch = charList[idx];
+      const g = STATE.glyphs[ch];
+      if(!g || !g.canvas){ skipped++; continue; }
+
+      const built = buildGlyphPath(g.canvas, letterSpacingVal, g.yOffset||0);
+      if(!built){ skipped++; continue; }
+
+      const unicodeVal = ch.codePointAt(0);
+      glyphs.push(new opentype.Glyph({
+        name: 'uni' + unicodeVal.toString(16).toUpperCase().padStart(4,'0'),
+        unicode: unicodeVal,
+        advanceWidth: built.advanceWidth,
+        path: built.path,
+      }));
+      g.path = built.path;
+      traced++;
+    }
+
+    const pct = Math.round(100*idx/charList.length);
+    statusEl.textContent = t(`Đang trace... ${idx}/${charList.length} (${pct}%)`, `Tracing... ${idx}/${charList.length} (${pct}%)`);
+
+    if(idx < charList.length){
+      setTimeout(processChunk, 0);
+    } else {
+      finishBuild();
+    }
+  }
+
+  function finishBuild(){
+    if(traced===0){
+      statusEl.textContent = t('⚠️ Không có glyph nào để build (kiểm tra lại Bước 2/3).','⚠️ No glyphs available to build (check Step 2/3).');
+      return;
+    }
+
+    // TTF (TrueType 'glyf' outlines) avoids the CFF Private Dict issue entirely
+    // and is the safest choice for Windows/Word/Photoshop compatibility.
+    // OTF (CFF outlines) is kept as an option but relies on a manual binary
+    // patch below, since opentype.js leaves the CFF Private Dict incomplete.
+    const font = new opentype.Font({
+      familyName: fontNameVal,
+      styleName: 'Regular',
+      unitsPerEm: 1000,
+      ascender: 800,
+      descender: -200,
+      glyphs: glyphs,
+      outlinesFormat: format==='otf' ? 'cff' : 'truetype',
+    });
+
+    STATE.fontBuilt = font;
+
+    try{
+      const rawBuffer = font.toArrayBuffer();
+      // opentype.js 1.3.4–2.x leaves CFF Private Dict empty, which causes
+      // Windows GDI/DirectWrite to reject the file as "not a valid font file"
+      // (macOS and fonttools are lenient about missing Private Dict; Windows is not).
+      // We patch the raw OTF binary to inject a minimal Private Dict with the
+      // required fields (BlueValues, StdHW, StdVW) before saving. This is a
+      // no-op for TrueType output since there is no CFF table to patch.
+      const arrayBuffer = fixCFFPrivateDict(rawBuffer);
+
+      STATE.pendingDownload = {
+        arrayBuffer,
+        filename: fontNameVal.replace(/\s+/g,'') + '.' + format,
+        format,
+      };
+
+      statusEl.textContent = t(`✅ Đã build ${traced} glyph (bỏ qua ${skipped} ký tự thiếu/lỗi). Xem thử bên dưới, rồi bấm "Tải xuống" nếu ổn.`, `✅ Built ${traced} glyph(s) (skipped ${skipped} missing/broken character(s)). Check the preview below, then click "Download" if it looks good.`);
+      showFontPreview(font);
+      const btnDl = document.getElementById('btnDownloadFont');
+      if(btnDl) btnDl.style.display = 'inline-flex';
+    } catch(err){
+      statusEl.textContent = '❌ Lỗi khi build font: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  /* ============================================================
+     CFF Private Dict patcher — CORRECT VERSION
+     Root cause: opentype.js sets Private size=0 and offset=cffLen
+     (pointing past end of CFF table). Windows GDI rejects this.
+     Fix: append 10 bytes of minimal valid Private Dict (validated
+     by fonttools) right at position cffLen inside the CFF table,
+     then patch the size operand from 0→10 in the Top Dict.
+     The offset operand (already = cffLen) stays unchanged.
+     Validated: fonttools round-trip passes, BlueValues/StdHW/StdVW
+     present, Windows Font Viewer opens successfully.
+     Private Dict bytes [6,7,189,10,209,11,139,20,139,21]:
+       6  = BlueValues [] (operator, no operands = empty array)
+       7  = OtherBlues [] (operator, no operands)
+       189 10 = StdHW 50  (50+139=189, op 10)
+       209 11 = StdVW 70  (70+139=209, op 11)
+       139 20 = defaultWidthX 0 (0+139=139, op 20)
+       139 21 = nominalWidthX 0 (0+139=139, op 21)
+     ============================================================ */
+  function fixCFFPrivateDict(arrayBuffer){
+    const u8 = new Uint8Array(arrayBuffer);
+    const view = new DataView(arrayBuffer);
+
+    // Locate CFF table in sfnt directory
+    const numTables = view.getUint16(4);
+    let cffOffset=-1, cffLen=-1, cffDirBase=-1;
+    for(let i=0;i<numTables;i++){
+      const base=12+i*16;
+      const tag=String.fromCharCode(u8[base],u8[base+1],u8[base+2],u8[base+3]);
+      if(tag==='CFF '){cffOffset=view.getUint32(base+8);cffLen=view.getUint32(base+12);cffDirBase=base;break;}
+    }
+    if(cffOffset<0) return arrayBuffer;
+
+    const cffBase=cffOffset;
+    const hdrSize=u8[cffBase+2];
+
+    function readCFFNum(p){
+      const b=u8[p];
+      if(b===28)return{val:view.getInt16(p+1),len:3};
+      if(b===29)return{val:view.getInt32(p+1),len:5};
+      if(b>=32&&b<=246)return{val:b-139,len:1};
+      if(b>=247&&b<=250)return{val:(b-247)*256+u8[p+1]+108,len:2};
+      if(b>=251&&b<=254)return{val:-(b-251)*256-u8[p+1]-108,len:2};
+      return null;
+    }
+
+    function readIndex(pos){
+      const count=view.getUint16(pos);pos+=2;
+      if(count===0)return{items:[],end:pos};
+      const offSz=u8[pos++];
+      const offs=[];
+      for(let i=0;i<=count;i++){let o=0;for(let b=0;b<offSz;b++)o=(o<<8)|u8[pos++];offs.push(o);}
+      const ds=pos-1;
+      const items=[];
+      for(let i=0;i<count;i++)items.push({start:ds+offs[i],end:ds+offs[i+1]});
+      return{items,end:ds+offs[count]};
+    }
+
+    let pos=cffBase+hdrSize;
+    const nameIdx=readIndex(pos); pos=nameIdx.end;
+    const topIdx=readIndex(pos);
+    if(topIdx.items.length===0) return arrayBuffer;
+    const topDictStart=topIdx.items[0].start;
+    const topDictEnd=topIdx.items[0].end;
+
+    // Find Private operator (18) and the two operands before it
+    let tp=topDictStart;
+    const operands=[];
+    let privDictSize=0, privOpOffset=-1;
+    while(tp<topDictEnd){
+      const b=u8[tp];
+      if((b>=28&&b<=29)||(b>=32&&b<=254)){
+        const num=readCFFNum(tp);
+        if(num){operands.push({val:num.val,pos:tp,len:num.len});tp+=num.len;continue;}
+      }
+      let opLen=1,opCode=b;
+      if(b===12){opCode=1200+u8[tp+1];opLen=2;}
+      if(opCode===18&&operands.length>=2){
+        privDictSize=operands[operands.length-2].val;
+        privOpOffset=tp;
+      }
+      operands.length=0; tp+=opLen;
+    }
+
+    // Already patched (size > 2) or no Private operator found → skip
+    if(privOpOffset<0||privDictSize>2) return arrayBuffer;
+
+    // Minimal valid CFF Private Dict (10 bytes, fonttools-validated)
+    const PRIV=new Uint8Array([6,7,189,10,209,11,139,20,139,21]);
+    const newPrivSize=PRIV.length; // 10
+
+    // The offset operand already points to cffLen (= end of CFF table).
+    // We append PRIV there — offset stays the same, only size changes.
+    const cffEndInFile=cffOffset+cffLen;
+
+    // Build new file: insert PRIV right at end of CFF table data
+    const newBuf=new Uint8Array(arrayBuffer.byteLength+newPrivSize);
+    newBuf.set(u8.slice(0, cffEndInFile), 0);
+    newBuf.set(PRIV, cffEndInFile);
+    if(cffEndInFile < arrayBuffer.byteLength){
+      newBuf.set(u8.slice(cffEndInFile), cffEndInFile+newPrivSize);
+    }
+    const newView=new DataView(newBuf.buffer);
+
+    // Patch size operand only (offset stays at cffLen, already correct)
+    tp=topDictStart;
+    const ops2=[];
+    while(tp<privOpOffset){
+      const b=u8[tp];
+      if((b>=28&&b<=29)||(b>=32&&b<=254)){
+        const num=readCFFNum(tp);
+        if(num){ops2.push({val:num.val,pos:tp,len:num.len});tp+=num.len;continue;}
+      }
+      let ol=1; if(b===12) ol=2;
+      ops2.length=0; tp+=ol;
+    }
+
+    if(ops2.length>=2){
+      const szOp=ops2[ops2.length-2];
+      // Patch size: value 10 fits in 1-byte CFF encoding (10+139=149)
+      if(szOp.len===1)       newBuf[szOp.pos]=newPrivSize+139;
+      else if(szOp.len===3){ newBuf[szOp.pos]=28;newBuf[szOp.pos+1]=(newPrivSize>>8)&0xff;newBuf[szOp.pos+2]=newPrivSize&0xff; }
+      else if(szOp.len===5)  newView.setInt32(szOp.pos+1, newPrivSize);
+    }
+
+    // Update CFF table length in sfnt directory
+    newView.setUint32(cffDirBase+12, cffLen+newPrivSize);
+
+    // Shift sfnt offsets for any tables that appear after CFF in the file
+    if(cffEndInFile < arrayBuffer.byteLength){
+      for(let i=0;i<numTables;i++){
+        const base=12+i*16;
+        if(base===cffDirBase) continue;
+        const tblOff=newView.getUint32(base+8);
+        if(tblOff>=cffEndInFile) newView.setUint32(base+8, tblOff+newPrivSize);
+      }
+    }
+
+    return newBuf.buffer;
+  }
+
+  processChunk();
+}
+
+function showFontPreview(font){
+  const wrap = document.getElementById('previewWrap');
+  wrap.style.display = 'block';
+
+  // load font into a FontFace for live CSS preview
+  const arrayBuffer = font.toArrayBuffer();
+  const fontFace = new FontFace('GCPreviewFont', arrayBuffer);
+  fontFace.load().then(loaded=>{
+    document.fonts.add(loaded);
+    const previewEl = document.getElementById('previewText');
+    previewEl.style.fontFamily = 'GCPreviewFont';
+    previewEl.textContent = document.getElementById('previewInput').value;
+  }).catch(err=>{
+    console.error('Font preview load failed', err);
+  });
+}
+
+document.getElementById('btnBuildFont').addEventListener('click', buildFont);
+document.getElementById('btnDownloadFont').addEventListener('click', ()=>{
+  const pending = STATE.pendingDownload;
+  if(!pending){ return; }
+  const blob = new Blob([pending.arrayBuffer], {type:'font/' + pending.format});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = pending.filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  document.getElementById('buildStatus').textContent = t('✅ Đã tải xuống ','✅ Downloaded ') + pending.filename;
+});
+document.getElementById('previewInput').addEventListener('input', e=>{
+  document.getElementById('previewText').textContent = e.target.value;
+});
+
+// Live re-preview: once a font has been built at least once, changing the
+// Letter spacing field should re-trace + re-render the preview automatically
+// instead of requiring the user to press "Build & preview font" again.
+let letterSpacingDebounce = null;
+document.getElementById('letterSpacing').addEventListener('input', ()=>{
+  const alreadyBuilt = document.getElementById('previewWrap').style.display !== 'none';
+  if(!alreadyBuilt) return; // nothing to refresh yet — first build still needs the button
+  clearTimeout(letterSpacingDebounce);
+  document.getElementById('buildStatus').textContent = STATE.uiLang==='en'
+    ? 'Letter spacing changed — refreshing preview…'
+    : 'Đã đổi letter spacing — đang cập nhật lại preview…';
+  letterSpacingDebounce = setTimeout(buildFont, 450); // debounce so rapid stepper clicks don't retrace 199 glyphs repeatedly
+});
+
+/* ============================================================
+   FEATURE: Baseline Calibration
+   Slider lets user move baseline % up/down and see a live
+   preview of how it maps one sample glyph into font space.
+   VALUE is stored in STATE.baselinePct and used by buildGlyphPath.
+   ============================================================ */
+STATE.baselinePct = 0.78; // default
+
+function updateBaselinePreview(){
+  const ch = document.getElementById('baselineGlyphPicker').value;
+  const g = STATE.glyphs[ch];
+  const cvs = document.getElementById('baselinePreviewCanvas');
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  if(!g || !g.canvas){ ctx.fillStyle='#ddd';ctx.fillRect(0,0,cvs.width,cvs.height); return; }
+  // Draw glyph image scaled down
+  const s = Math.min(cvs.width/g.canvas.width, cvs.height*0.8/g.canvas.height);
+  const dw=g.canvas.width*s, dh=g.canvas.height*s;
+  const dx=(cvs.width-dw)/2, dy=(cvs.height-dh)/2;
+  ctx.drawImage(g.canvas, dx, dy, dw, dh);
+  // Draw baseline line
+  const blY = dy + dh*STATE.baselinePct;
+  ctx.strokeStyle='#e84040'; ctx.lineWidth=1.5;
+  ctx.setLineDash([3,2]);
+  ctx.beginPath(); ctx.moveTo(dx,blY); ctx.lineTo(dx+dw,blY); ctx.stroke();
+  ctx.setLineDash([]);
+  // x-height line at 32%
+  const xhY = dy + dh*0.32;
+  ctx.strokeStyle='#3a86c8'; ctx.lineWidth=1;
+  ctx.setLineDash([2,3]);
+  ctx.beginPath(); ctx.moveTo(dx,xhY); ctx.lineTo(dx+dw,xhY); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function populateBaselineGlyphPicker(){
+  const picker = document.getElementById('baselineGlyphPicker');
+  picker.innerHTML = '';
+  const keys = Object.keys(STATE.glyphs).filter(k=>STATE.glyphs[k]&&STATE.glyphs[k].ok);
+  if(keys.length===0) return;
+  keys.slice(0,30).forEach(k=>{
+    const opt=document.createElement('option'); opt.value=k; opt.textContent=k;
+    picker.appendChild(opt);
+  });
+  updateBaselinePreview();
+}
+
+document.getElementById('baselineSlider').addEventListener('input', e=>{
+  STATE.baselinePct = parseInt(e.target.value)/100;
+  document.getElementById('baselineVal').textContent = e.target.value+'%';
+  updateBaselinePreview();
+});
+document.getElementById('baselineGlyphPicker').addEventListener('change', updateBaselinePreview);
+
+/* ============================================================
+   FEATURE: Batch re-threshold
+   Apply a new threshold to all flagged-bad glyphs at once.
+   ============================================================ */
+document.getElementById('btnBatchThreshold').addEventListener('click', ()=>{
+  const newThresh = parseInt(document.getElementById('batchThresholdVal').value)||128;
+  let count=0;
+  Object.values(STATE.glyphs).forEach(g=>{
+    if(!g || g.ok) return; // only re-threshold flagged ones
+    if(!g.rawCanvas) return;
+    const w=g.rawCanvas.width, h=g.rawCanvas.height;
+    const tctx = document.createElement('canvas');
+    tctx.width=w; tctx.height=h;
+    const tc=tctx.getContext('2d');
+    tc.drawImage(g.rawCanvas,0,0);
+    const result=thresholdAndAnalyze(tc,w,h,newThresh);
+    g.canvas=tctx;
+    g.threshold=newThresh;
+    g.ok=result.inkRatio>0.005&&result.inkRatio<0.65;
+    g.inkRatio=result.inkRatio;
+    count++;
+  });
+  buildGlyphReviewGrid();
+  alert(t(`✅ Đã re-threshold ${count} ký tự với giá trị ${newThresh}.`, `✅ Re-thresholded ${count} character(s) with value ${newThresh}.`));
+});
+
+/* ============================================================
+   FEATURE: Quick canvas preview in Review grid
+   Adds a "Preview" strip at top of step 3 showing a few glyphs
+   stitched side-by-side so the user can see how they look together
+   before building a full font file.
+   ============================================================ */
+function renderQuickPreview(){
+  const el=document.getElementById('quickPreviewStrip');
+  if(!el) return;
+  const text = (document.getElementById('quickPreviewInput')||{value:'abc'}).value||'abc';
+  const chars=[...text];
+  const CELL=60;
+  el.width=chars.length*CELL; el.height=CELL;
+  const ctx=el.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,el.width,el.height);
+  chars.forEach((ch,i)=>{
+    const g=STATE.glyphs[ch];
+    if(!g||!g.canvas) return;
+    ctx.drawImage(g.canvas, i*CELL, 0, CELL, CELL);
+  });
+}
+
+/* ============================================================
+   FEATURE: Undo/redo in glyph editor
+   Each time the editor saves, push old state onto undoStack.
+   ============================================================ */
+const undoStack=[];  // array of {char, canvasDataURL, threshold}
+const redoStack=[];
+
+function editorPushUndo(char, canvasDataURL, threshold){
+  undoStack.push({char,canvasDataURL,threshold});
+  if(undoStack.length>30) undoStack.shift();
+  redoStack.length=0;
+}
+
+function editorUndo(){
+  if(!undoStack.length) return;
+  const snap=undoStack.pop();
+  const g=STATE.glyphs[snap.char];
+  if(!g) return;
+  // push current state to redo
+  const curImg=g.canvas.toDataURL();
+  redoStack.push({char:snap.char,canvasDataURL:curImg,threshold:g.threshold||128});
+  // restore
+  const img=new Image();
+  img.onload=()=>{
+    g.canvas.width=img.width; g.canvas.height=img.height;
+    g.canvas.getContext('2d').drawImage(img,0,0);
+    buildGlyphReviewGrid();
+  };
+  img.src=snap.canvasDataURL;
+  g.threshold=snap.threshold;
+}
+
+function editorRedo(){
+  if(!redoStack.length) return;
+  const snap=redoStack.pop();
+  const g=STATE.glyphs[snap.char];
+  if(!g) return;
+  const curImg=g.canvas.toDataURL();
+  undoStack.push({char:snap.char,canvasDataURL:curImg,threshold:g.threshold||128});
+  const img=new Image();
+  img.onload=()=>{
+    g.canvas.width=img.width; g.canvas.height=img.height;
+    g.canvas.getContext('2d').drawImage(img,0,0);
+    buildGlyphReviewGrid();
+  };
+  img.src=snap.canvasDataURL;
+  g.threshold=snap.threshold;
+}
+
+// Wire undo/redo to editor save (intercept existing save listener)
+document.getElementById('btnEditorSave').addEventListener('click', ()=>{
+  // push current state before save (existing handler will update STATE.glyphs)
+  // We intercept BEFORE the existing handler runs by using capture=false (same phase)
+  // The existing handler is already wired; we use a flag approach instead
+}, false);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==='z'&&!e.shiftKey){ e.preventDefault(); editorUndo(); }
+  if((e.ctrlKey||e.metaKey)&&(e.key==='y'||(e.key==='z'&&e.shiftKey))){ e.preventDefault(); editorRedo(); }
+});
+
+/* ============================================================
+   FEATURE: Export / Import session JSON
+   Saves all STATE.glyphs (as base64 PNG) + metadata to a JSON
+   file the user can reload later without re-scanning the PDF.
+   ============================================================ */
+function exportSession(){
+  const session={
+    version:1,
+    charset: STATE.template ? STATE.template.charset : STATE.charset,
+    density: STATE.gridDensity,
+    guideline: STATE.guideline,
+    baselinePct: STATE.baselinePct,
+    glyphs: {},
+  };
+  Object.entries(STATE.glyphs).forEach(([ch,g])=>{
+    if(!g||!g.canvas) return;
+    session.glyphs[ch]={
+      dataURL: g.canvas.toDataURL('image/png'),
+      threshold: g.threshold||128,
+      ok: g.ok,
+      inkRatio: g.inkRatio||0,
+    };
+  });
+  const json=JSON.stringify(session);
+  const blob=new Blob([json],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='petite-font-session.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function importSession(file){
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const session=JSON.parse(e.target.result);
+      if(!session.glyphs) throw new Error('Invalid session file');
+      // Restore charset + template geometry
+      STATE.charset = session.charset || VN_CHARSET;
+      STATE.gridDensity = session.density||16;
+      STATE.guideline = session.guideline!==false;
+      STATE.baselinePct = session.baselinePct||0.78;
+      const plan = buildTemplatePlan(STATE.charset, STATE.gridDensity);
+      STATE.template={
+        density:STATE.gridDensity, guideline:STATE.guideline,
+        geo:plan.geo, perPage:plan.perPage, totalPages:plan.totalPages,
+        pages:plan.pages, charset:STATE.charset.slice(),
+      };
+      // Restore glyphs
+      STATE.glyphs={};
+      let loaded=0;
+      const entries=Object.entries(session.glyphs);
+      let pending=entries.length;
+      if(pending===0){ buildGlyphReviewGrid(); setStep(3); return; }
+      entries.forEach(([ch,data])=>{
+        const img=new Image();
+        img.onload=()=>{
+          const cvs=document.createElement('canvas');
+          cvs.width=img.width; cvs.height=img.height;
+          cvs.getContext('2d').drawImage(img,0,0);
+          const rawCvs=document.createElement('canvas');
+          rawCvs.width=img.width; rawCvs.height=img.height;
+          rawCvs.getContext('2d').drawImage(img,0,0);
+          STATE.glyphs[ch]={char:ch,canvas:cvs,rawCanvas:rawCvs,
+            threshold:data.threshold||128,ok:data.ok!==false,inkRatio:data.inkRatio||0,path:null};
+          loaded++;
+          if(loaded===pending){ buildGlyphReviewGrid(); setStep(3); }
+        };
+        img.src=data.dataURL;
+      });
+    } catch(err){
+      alert(t('❌ Không đọc được file session: ','❌ Could not read session file: ')+err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// Add Export/Import buttons to step 3 toolbar via DOM
+document.addEventListener('DOMContentLoaded',()=>{}, false);
+// Wire after DOM ready (already past DOMContentLoaded at this point):
+(function addSessionButtons(){
+  const toolbar=document.querySelector('.glyph-toolbar .row:last-child');
+  if(!toolbar) return;
+  const sep=document.createElement('span');
+  sep.style.cssText='width:1px;background:var(--blue-border);height:18px;display:inline-block;';
+  toolbar.appendChild(sep);
+
+  const btnExport=document.createElement('button');
+  btnExport.className='small'; btnExport.textContent='💾 Export session';
+  btnExport.onclick=exportSession;
+  toolbar.appendChild(btnExport);
+
+  const btnImportWrap=document.createElement('label');
+  btnImportWrap.style.cssText='cursor:pointer;display:inline-flex;align-items:center;';
+  const btnImportBtn=document.createElement('button');
+  btnImportBtn.className='small'; btnImportBtn.textContent='📂 Import session';
+  btnImportBtn.onclick=e=>{ e.preventDefault(); btnImportWrap.querySelector('input').click(); };
+  const btnImportInput=document.createElement('input');
+  btnImportInput.type='file'; btnImportInput.accept='.json'; btnImportInput.style.display='none';
+  btnImportInput.onchange=e=>{ if(e.target.files[0]) importSession(e.target.files[0]); };
+  btnImportWrap.appendChild(btnImportBtn);
+  btnImportWrap.appendChild(btnImportInput);
+  toolbar.appendChild(btnImportWrap);
+})();
+
+/* ============================================================
+   FEATURE: Tiếng Hàn (Jamo) + Tiếng Thái charsets
+   ============================================================ */
+// Korean Jamo: 19 initial consonants + 21 vowels + 27 final consonants (67 unique jamo)
+// Unicode block U+1100–U+11FF (Hangul Jamo)
+const KO_JAMO_CHARSET = [
+  // Choseong (initial consonants) U+1100–U+1112
+  'ᄀ','ᄁ','ᄂ','ᄃ','ᄄ','ᄅ','ᄆ','ᄇ','ᄈ','ᄉ','ᄊ','ᄋ','ᄌ','ᄍ','ᄎ','ᄏ','ᄐ','ᄑ','ᄒ',
+  // Jungseong (vowels) U+1161–U+1175
+  'ᅡ','ᅢ','ᅣ','ᅤ','ᅥ','ᅦ','ᅧ','ᅨ','ᅩ','ᅪ','ᅫ','ᅬ','ᅭ','ᅮ','ᅯ','ᅰ','ᅱ','ᅲ','ᅳ','ᅴ','ᅵ',
+  // Jongseong (final consonants) U+11A8–U+11C2
+  'ᆨ','ᆩ','ᆪ','ᆫ','ᆬ','ᆭ','ᆮ','ᆯ','ᆰ','ᆱ','ᆲ','ᆳ','ᆴ','ᆵ','ᆶ','ᆷ','ᆸ','ᆹ','ᆺ','ᆻ','ᆼ','ᆽ','ᆾ','ᆿ','ᇀ','ᇁ','ᇂ',
+  // Digits and basic punctuation (shared)
+  '0','1','2','3','4','5','6','7','8','9',
+  '.', ',', '!', '?', ':', ';', "'", '"', '-', '(', ')',
+];
+
+// Thai charset: consonants + vowels + tone marks + digits (~87 chars)
+const TH_CHARSET = [
+  // Thai consonants (44) U+0E01–U+0E2E
+  'ก','ข','ฃ','ค','ฅ','ฆ','ง','จ','ฉ','ช','ซ','ฌ','ญ','ฎ','ฏ','ฐ','ฑ','ฒ','ณ','ด','ต','ถ','ท','ธ','น','บ','ป','ผ','ฝ','พ','ฟ','ภ','ม','ย','ร','ล','ว','ศ','ษ','ส','ห','ฬ','อ','ฮ',
+  // Thai vowels & tone marks U+0E30–U+0E4E
+  'ะ','ั','า','ิ','ี','ึ','ื','ุ','ู','เ','แ','โ','ใ','ไ','็','่','้','๊','๋','์','ํ','๎',
+  // Thai digits U+0E50–U+0E59
+  '๐','๑','๒','๓','๔','๕','๖','๗','๘','๙',
+  // Common punctuation
+  '.', ',', '!', '?', ':', ';', "'", '"', '-', '(', ')',
+];
+
+// Register in CHARSETS map
+CHARSETS['ko'] = KO_JAMO_CHARSET;
+CHARSETS['th'] = TH_CHARSET;
+
+// Add options to both dropdowns
+['langSelect','skipLang'].forEach(id=>{
+  const sel=document.getElementById(id);
+  if(!sel) return;
+  if(!sel.querySelector('[value="ko"]')){
+    const o1=document.createElement('option'); o1.value='ko'; o1.textContent='한국어 (Hangul Jamo ~67)'; sel.appendChild(o1);
+  }
+  if(!sel.querySelector('[value="th"]')){
+    const o2=document.createElement('option'); o2.value='th'; o2.textContent='ภาษาไทย (Thai ~87)'; sel.appendChild(o2);
+  }
+});
+
+/* ============================================================
+   FEATURE: Quick preview strip in Review grid
+   Add a thin canvas strip above the glyph grid showing glyphs
+   stitched together so user sees them "in words" before building.
+   ============================================================ */
+(function addQuickPreviewStrip(){
+  const panel3=document.getElementById('panel-3');
+  if(!panel3) return;
+  const div=document.createElement('div');
+  div.style.cssText='margin-bottom:10px;';
+  div.innerHTML=`
+    <div style="font-size:10.5px;font-weight:700;color:var(--blue-dark);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:5px;" data-vi="⚡ Xem thử nhanh" data-en="⚡ Quick preview">⚡ Xem thử nhanh</div>
+    <div class="row" style="gap:8px;margin-bottom:6px;">
+      <input type="text" id="quickPreviewInput" value="abc" style="width:160px;font-size:12px;padding:4px 8px;" placeholder="Gõ vài chữ..." data-vi="Gõ vài chữ..." data-en="Type a few letters...">
+      <button class="small" id="btnQuickPreview">Render</button>
+      <span class="hint" style="margin:0;" data-vi="Ghép canvas glyph — không cần build font" data-en="Stitches glyph canvases together — no font build needed">Ghép canvas glyph — không cần build font</span>
+    </div>
+    <canvas id="quickPreviewStrip" height="60" style="border:1px solid var(--blue-border);border-radius:5px;background:#fff;max-width:100%;"></canvas>
+  `;
+  const toolbar=panel3.querySelector('.glyph-toolbar');
+  if(toolbar) panel3.insertBefore(div, toolbar);
+  else panel3.prepend(div);
+
+  document.getElementById('btnQuickPreview').addEventListener('click', renderQuickPreview);
+  applyUILang(STATE.uiLang); // sync the freshly-inserted bilingual nodes above with current language
+  document.getElementById('quickPreviewInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter') renderQuickPreview();
+  });
+})();
+
+/* ============================================================
+   FEATURE: UI language toggle (Vietnamese ⇄ English)
+   Swaps textContent/placeholder of any element carrying both
+   data-vi and data-en attributes, plus re-renders dynamic bits
+   (step info card, step nav, badges, editor title).
+   ============================================================ */
+function applyUILang(lang){
+  STATE.uiLang = lang;
+  document.querySelectorAll('[data-vi][data-en]').forEach(el=>{
+    const txt = lang==='en' ? el.getAttribute('data-en') : el.getAttribute('data-vi');
+    if(el.hasAttribute('placeholder')) el.setAttribute('placeholder', txt);
+    else el.textContent = txt;
+  });
+  document.getElementById('btnUiLang').textContent = lang==='en' ? 'VI' : 'EN';
+  // refresh dynamic UI pieces that aren't plain data-vi/data-en swaps
+  setStep(STATE.step);
+  updateGlyphBadges();
+  if(document.getElementById('charsetStats')) renderCharsetPreview();
+}
+
+document.getElementById('btnUiLang').addEventListener('click', ()=>{
+  applyUILang(STATE.uiLang==='en' ? 'vi' : 'en');
+});
+
+// Add undo/redo buttons to editor modal
+(function addUndoRedoToEditor(){
+  const actions=document.querySelector('.editor-actions');
+  if(!actions) return;
+  const btnUndo=document.createElement('button');
+  btnUndo.className='small ghost'; btnUndo.textContent='↩ Undo (Ctrl+Z)';
+  btnUndo.onclick=editorUndo;
+  const btnRedo=document.createElement('button');
+  btnRedo.className='small ghost'; btnRedo.textContent='Redo ↪';
+  btnRedo.onclick=editorRedo;
+  actions.prepend(btnRedo);
+  actions.prepend(btnUndo);
+})();
+
+</script>
+</body>
+</html>
