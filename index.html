@@ -670,15 +670,19 @@
       <div class="hint"><span data-vi="Chọn 1 chữ thử để xem căn chỉnh →" data-en="Pick a sample character to preview alignment →">Chọn 1 chữ thử để xem căn chỉnh →</span> <select id="baselineGlyphPicker" style="font-size:11px;padding:3px 6px;"></select></div>
     </div>
 
-    <div class="row" style="margin-top:12px;">
+    <div class="row" style="margin-top:12px;align-items:center;">
       <button class="primary" id="btnBuildFont" data-vi="⚙️ Build & Xem thử font" data-en="⚙️ Build & preview font">⚙️ Build & Xem thử font</button>
       <button class="primary" id="btnDownloadFont" style="display:none;background:var(--good);border-color:var(--good);" data-vi="⬇️ Tải xuống font" data-en="⬇️ Download font">⬇️ Tải xuống font</button>
+      <label class="field" style="flex:0 0 auto;">
+        <span data-vi="Khoảng cách chữ" data-en="Letter spacing">Khoảng cách chữ</span>
+        <input type="number" id="letterSpacingBuild" value="60" style="width:70px;">
+      </label>
       <span class="hint" id="buildStatus"></span>
     </div>
 
     <div id="previewWrap" style="display:none;">
       <label class="field" style="margin-top:12px;"><span data-vi="Xem thử" data-en="Preview">Xem thử</span>
-        <input type="text" id="previewInput" value="Chào bạn, tôi tên Phương!" style="width:100%;">
+        <input type="text" id="previewInput" value="Ưng font chưa nè?" style="width:100%;">
       </label>
       <div class="preview-text" id="previewText"></div>
       <div class="hint" data-vi="Chưa ưng ý? Quay lại bước 03 · Review để sửa nét hoặc chỉnh baseline từng ký tự, rồi bấm Build lại." data-en="Not happy with it? Go back to step 03 · Review to fix strokes or nudge a glyph's baseline, then build again.">Chưa ưng ý? Quay lại bước 03 · Review để sửa nét hoặc chỉnh baseline từng ký tự, rồi bấm Build lại.</div>
@@ -763,6 +767,7 @@ const STATE = {
   fontBuilt: null,
   pendingDownload: null,
   uiLang: 'en',
+  previewEdited: false,
 };
 
 // Small i18n helper for dynamic status/log strings generated in JS
@@ -841,10 +846,24 @@ function renderCharsetPreview(){
   `;
 }
 
+// Default preview sentence per language, only if the user hasn't
+// typed anything custom into the preview box yet.
+const PREVIEW_GREETING = {
+  vi: 'Ưng font chưa nè?',
+  en: "Isn't this font so cool?!",
+  th: 'ฟอนต์นี้เจ๋งมากใช่ไหม?!',
+  ko: '이 폰트 진짜 멋지지 않아요?!',
+};
+
 function applyLang(lang){
   STATE.lang = lang;
   STATE.charset = CHARSETS[lang] || VN_CHARSET;
   renderCharsetPreview();
+  const previewInput = document.getElementById('previewInput');
+  if(previewInput && !STATE.previewEdited){
+    previewInput.value = PREVIEW_GREETING[lang] || PREVIEW_GREETING.en;
+    document.getElementById('previewText').textContent = previewInput.value;
+  }
 }
 
 document.getElementById('langSelect').addEventListener('change', e=> applyLang(e.target.value));
@@ -2058,6 +2077,7 @@ document.getElementById('btnDownloadFont').addEventListener('click', ()=>{
   document.getElementById('buildStatus').textContent = t('✅ Đã tải xuống ','✅ Downloaded ') + pending.filename;
 });
 document.getElementById('previewInput').addEventListener('input', e=>{
+  STATE.previewEdited = true;
   document.getElementById('previewText').textContent = e.target.value;
 });
 
@@ -2065,7 +2085,12 @@ document.getElementById('previewInput').addEventListener('input', e=>{
 // Letter spacing field should re-trace + re-render the preview automatically
 // instead of requiring the user to press "Build & preview font" again.
 let letterSpacingDebounce = null;
-document.getElementById('letterSpacing').addEventListener('input', ()=>{
+function onLetterSpacingChanged(newVal, sourceId){
+  // keep both copies of the field (Review step + the shortcut next to the
+  // Build button) in sync no matter which one the user typed into
+  ['letterSpacing','letterSpacingBuild'].forEach(id=>{
+    if(id !== sourceId) document.getElementById(id).value = newVal;
+  });
   const alreadyBuilt = document.getElementById('previewWrap').style.display !== 'none';
   if(!alreadyBuilt){
     // Nothing built yet, so there's no preview/font to update in place —
@@ -2081,7 +2106,9 @@ document.getElementById('letterSpacing').addEventListener('input', ()=>{
     ? 'Letter spacing changed — refreshing preview…'
     : 'Đã đổi letter spacing — đang cập nhật lại preview…';
   letterSpacingDebounce = setTimeout(buildFont, 450); // debounce so rapid stepper clicks don't retrace 199 glyphs repeatedly
-});
+}
+document.getElementById('letterSpacing').addEventListener('input', e=> onLetterSpacingChanged(e.target.value, 'letterSpacing'));
+document.getElementById('letterSpacingBuild').addEventListener('input', e=> onLetterSpacingChanged(e.target.value, 'letterSpacingBuild'));
 
 /* ============================================================
    FEATURE: Baseline Calibration
