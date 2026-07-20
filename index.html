@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/opentype.js/1.3.4/opentype.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   /* Decorative Gaegu/Do Hyeon fonts removed — whole app now uses simple system sans (see --ui-font below). */
 
@@ -763,6 +764,7 @@ const STATE = {
   guideline: true,
   ghostChar: false,
   template: null,     // { pageLayout, cellsPerPage, totalPages, cellPositions }
+  filledPages: new Set(), // các index trang template đã có dữ liệu (giữ qua nhiều lượt upload)
   glyphs: {},          // char -> { imageData(dataURL), path(opentype path or null), ok(bool), bbox }
   fontBuilt: null,
   pendingDownload: null,
@@ -1146,6 +1148,7 @@ function generateTemplatePDF(){
     pages: plan.pages,       // array of arrays of chars, in draw order
     charset: STATE.charset.slice(),
   };
+  STATE.filledPages = new Set();
 
   plan.pages.forEach((pageChars, pIdx)=>{
     if(pIdx>0) doc.addPage();
@@ -1223,6 +1226,7 @@ document.getElementById('btnConfirmSkip').addEventListener('click', ()=>{
     pages:      plan.pages,
     charset:    STATE.charset.slice(),
   };
+  STATE.filledPages = new Set();
 
   document.getElementById('skipForm').style.display = 'none';
   document.getElementById('genStatus').textContent =
@@ -1250,6 +1254,42 @@ function logDetect(msg){
   log.style.display = 'block';
   log.textContent += msg + '\n';
   log.scrollTop = log.scrollHeight;
+}
+
+// ---- OCR: tự nhận diện "Page X/Y" in trên mỗi trang, để không phụ thuộc
+// vào thứ tự upload (người dùng có thể up ảnh lộn xộn từ thư viện ảnh). ----
+let ocrWorkerPromise = null;
+async function getOcrWorker(){
+  if(!ocrWorkerPromise){
+    ocrWorkerPromise = (async ()=>{
+      const worker = await Tesseract.createWorker('eng');
+      await worker.setParameters({ tessedit_char_whitelist: '0123456789Page/ ' });
+      return worker;
+    })();
+  }
+  return ocrWorkerPromise;
+}
+
+async function detectPageNumberFromCanvas(canvas){
+  try{
+    const pxPerMmActual = canvas.width / PAGE_W;
+    const x0 = Math.round(6*pxPerMmActual), y0 = Math.round(4*pxPerMmActual);
+    const x1 = Math.min(canvas.width, Math.round(100*pxPerMmActual));
+    const y1 = Math.min(canvas.height, Math.round(18*pxPerMmActual));
+    const w = x1-x0, h = y1-y0;
+    if(w<=0 || h<=0) return null;
+    const crop = document.createElement('canvas');
+    crop.width=w; crop.height=h;
+    crop.getContext('2d').drawImage(canvas, x0,y0,w,h, 0,0,w,h);
+
+    const worker = await getOcrWorker();
+    const { data:{ text } } = await worker.recognize(crop);
+    const m = text.match(/Page\s*(\d+)\s*\/\s*(\d+)/i);
+    if(m) return { page: parseInt(m[1],10), total: parseInt(m[2],10) };
+  }catch(e){
+    console.warn('OCR page-detect lỗi:', e);
+  }
+  return null;
 }
 
 async function handleUploadedFiles(fileList){
@@ -1327,6 +1367,8 @@ async function handleUploadedFiles(fileList){
     }
   }
 
+  const filledPageIndices = STATE.filledPages; // Set, giữ nguyên qua nhiều lượt gọi upload
+
   for(const file of files){
     const pageCanvases = await getPageCanvases(file);
 
@@ -1334,11 +1376,29 @@ async function handleUploadedFiles(fileList){
       const pNum = pIdx+1;
       const canvas = pageCanvases[pIdx];
 
-      // determine which template page this corresponds to.
-      // Strategy: use running page index across all uploaded files & pages,
-      // in upload order, matching template.pages order. This assumes the user
-      // uploads pages in the same order they were printed (most common case).
-      const templatePageIdx = processedPages;
+      // Nhận diện số trang template bằng OCR (đọc dòng "Page X/Y" in trên đầu trang),
+      // để không phụ thuộc vào thứ tự upload — người dùng có thể chọn ảnh lộn xộn
+      // từ thư viện ảnh và vẫn ghép đúng chữ.
+      logDetect(t(`  🔎 Đang nhận diện số trang cho ${file.name} (trang ${pNum})...`,`  🔎 Detecting page number for ${file.name} (page ${pNum})...`));
+      const detected = await detectPageNumberFromCanvas(canvas);
+
+      let templatePageIdx;
+      if(detected && detected.page>=1 && detected.page<=STATE.template.totalPages){
+        templatePageIdx = detected.page - 1;
+        logDetect(t(
+          `  ✓ Nhận diện: đây là trang template #${detected.page}/${STATE.template.totalPages}.`,
+          `  ✓ Detected: this is template page #${detected.page}/${STATE.template.totalPages}.`
+        ));
+      } else {
+        // OCR thất bại (ảnh mờ, chụp nghiêng, thiếu ánh sáng...) -> tạm dùng thứ tự upload,
+        // nhưng cảnh báo rõ để người dùng biết cần kiểm tra lại thủ công.
+        templatePageIdx = processedPages;
+        logDetect(t(
+          `  ⚠️ Không đọc được số trang (ảnh có thể mờ/nghiêng) — tạm xếp theo thứ tự upload (trang ${templatePageIdx+1}). Kiểm tra lại ở Bước 3 nếu nghi ngờ sai.`,
+          `  ⚠️ Could not read the page number (image may be blurry/tilted) — falling back to upload order (page ${templatePageIdx+1}). Double-check in Step 3 if unsure.`
+        ));
+      }
+
       if(templatePageIdx >= STATE.template.totalPages){
         logDetect(t(
           `⚠️ Trang dư (vượt quá ${STATE.template.totalPages} trang template), bỏ qua trang ${pNum} của ${file.name}.`,
@@ -1347,6 +1407,14 @@ async function handleUploadedFiles(fileList){
         processedPages++;
         continue;
       }
+      if(filledPageIndices.has(templatePageIdx)){
+        logDetect(t(
+          `  ℹ️ Trang template #${templatePageIdx+1} đã có dữ liệu trước đó — dữ liệu mới sẽ ghi đè.`,
+          `  ℹ️ Template page #${templatePageIdx+1} was already filled — new data will overwrite it.`
+        ));
+      }
+      filledPageIndices.add(templatePageIdx);
+
       const pageChars = STATE.template.pages[templatePageIdx];
       const geo = STATE.template.geo;
       const pxPerMmActual = canvas.width / PAGE_W;
@@ -1388,20 +1456,25 @@ async function handleUploadedFiles(fileList){
       });
 
       processedPages++;
-      const pct = Math.min(100, Math.round(100*processedPages/STATE.template.totalPages));
+      const pct = Math.min(100, Math.round(100*filledPageIndices.size/STATE.template.totalPages));
       progBar.style.width = pct+'%';
       logDetect(t(
-        `  ✓ Trang ${pNum}: cắt ${pageChars.length} ô (template trang ${templatePageIdx+1})`,
-        `  ✓ Page ${pNum}: cropped ${pageChars.length} cell(s) (template page ${templatePageIdx+1})`
+        `  ✓ Đã cắt ${pageChars.length} ô cho trang template #${templatePageIdx+1}.`,
+        `  ✓ Cropped ${pageChars.length} cell(s) for template page #${templatePageIdx+1}.`
       ));
     }
   }
 
+
   logDetect(t(`✅ Hoàn tất: ${totalCharsCropped} ký tự đã cắt.`,`✅ Done: ${totalCharsCropped} character(s) cropped.`));
-  if(processedPages < STATE.template.totalPages){
+  if(filledPageIndices.size < STATE.template.totalPages){
+    const missing = [];
+    for(let i=0;i<STATE.template.totalPages;i++){
+      if(!filledPageIndices.has(i)) missing.push(i+1);
+    }
     logDetect(t(
-      `⚠️ Còn thiếu ${STATE.template.totalPages - processedPages} trang so với template. Bạn có thể upload bổ sung trước khi qua Bước 3, hoặc tiếp tục với phần đã có (ký tự thiếu sẽ bị bỏ qua khi build font).`,
-      `⚠️ ${STATE.template.totalPages - processedPages} page(s) still missing compared to the template. You can upload more before going to Step 3, or continue with what you have (missing characters will be skipped when building the font).`
+      `⚠️ Còn thiếu ${missing.length} trang so với template: trang ${missing.join(', ')}. Bạn có thể upload bổ sung trước khi qua Bước 3, hoặc tiếp tục với phần đã có (ký tự thiếu sẽ bị bỏ qua khi build font).`,
+      `⚠️ ${missing.length} page(s) still missing compared to the template: page ${missing.join(', ')}. You can upload more before going to Step 3, or continue with what you have (missing characters will be skipped when building the font).`
     ));
   }
 
@@ -2361,6 +2434,7 @@ function importSession(file){
         geo:plan.geo, perPage:plan.perPage, totalPages:plan.totalPages,
         pages:plan.pages, charset:STATE.charset.slice(),
       };
+      STATE.filledPages = new Set();
       // Restore glyphs
       STATE.glyphs={};
       let loaded=0;
