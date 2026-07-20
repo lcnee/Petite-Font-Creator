@@ -722,6 +722,12 @@
       </label>
       <span class="hint" style="margin:0;" data-vi="Dùng khi ký tự này cao/thấp hơn baseline chung so với các chữ khác." data-en="Use this when this glyph sits higher/lower than the shared baseline.">Dùng khi ký tự này cao/thấp hơn baseline chung so với các chữ khác.</span>
     </div>
+    <div class="row" style="margin-top:8px;">
+      <label class="field"><span data-vi="Khoảng cách riêng (units/em, + rộng / - hẹp)" data-en="Extra spacing (units/em, + wider / - narrower)">Khoảng cách riêng (units/em, + rộng / - hẹp)</span>
+        <input type="number" id="editorSpacingExtra" value="0" step="10" style="width:90px;">
+      </label>
+      <span class="hint" style="margin:0;" data-vi="Cộng thêm/bớt vào letter spacing chung, chỉ áp dụng cho riêng ký tự này." data-en="Adds to/subtracts from the global letter spacing, for this character only.">Cộng thêm/bớt vào letter spacing chung, chỉ áp dụng cho riêng ký tự này.</span>
+    </div>
     <div class="editor-actions">
       <button class="ghost" id="btnEditorCancel" data-vi="Đóng" data-en="Close">Đóng</button>
       <button class="danger small" id="btnEditorClear" data-vi="Đánh dấu trống / bỏ ký tự này" data-en="Mark empty / remove this character">Đánh dấu trống / bỏ ký tự này</button>
@@ -1631,9 +1637,11 @@ function openGlyphEditor(ch){
     ctx.drawImage(g.canvas, 0,0,g.canvas.width,g.canvas.height, 0,0,300,300);
     document.getElementById('editorThreshold').value = g.threshold;
     document.getElementById('editorYOffset').value = g.yOffset||0;
+    document.getElementById('editorSpacingExtra').value = g.spacingExtra||0;
   } else {
     document.getElementById('editorThreshold').value = 128;
     document.getElementById('editorYOffset').value = 0;
+    document.getElementById('editorSpacingExtra').value = 0;
   }
   document.getElementById('editorOverlay').classList.add('open');
 }
@@ -1690,11 +1698,14 @@ document.getElementById('btnEditorSave').addEventListener('click', ()=>{
     if(g){
       const yOff = parseInt(document.getElementById('editorYOffset').value)||0;
       if(g.yOffset !== yOff){ g.yOffset = yOff; g.path = null; }
+      const spExtra = parseInt(document.getElementById('editorSpacingExtra').value)||0;
+      if(g.spacingExtra !== spExtra){ g.spacingExtra = spExtra; g.path = null; }
     }
   }
   closeGlyphEditor();
   renderGlyphGrid();
   updateGlyphBadges();
+  renderQuickPreview();
 });
 
 /* ============================================================
@@ -1865,7 +1876,7 @@ function signedArea(poly){
    Reads STATE.baselinePct for user-calibrated baseline position.
    Uses auto-epsilon from ink bounding box for smooth simplification.
    ============================================================ */
-function buildGlyphPath(canvas, letterSpacingVal, yOffsetPx){
+function buildGlyphPath(canvas, letterSpacingVal, yOffsetPx, spacingExtraVal){
   const { mask, w, h } = getBinaryMask(canvas);
   const { contours } = traceContours(mask, w, h);
   if(contours.length===0) return null;
@@ -1902,7 +1913,7 @@ function buildGlyphPath(canvas, letterSpacingVal, yOffsetPx){
     path.close();
   });
 
-  const advanceWidth=Math.round((inkWidthPx+sidebearingPx*2)*scale)+(letterSpacingVal||60);
+  const advanceWidth=Math.round((inkWidthPx+sidebearingPx*2)*scale)+(letterSpacingVal||60)+(spacingExtraVal||0);
   return{path,advanceWidth};
 }
 
@@ -1942,7 +1953,7 @@ function buildFont(){
       const g = STATE.glyphs[ch];
       if(!g || !g.canvas){ skipped++; continue; }
 
-      const built = buildGlyphPath(g.canvas, letterSpacingVal, g.yOffset||0);
+      const built = buildGlyphPath(g.canvas, letterSpacingVal, g.yOffset||0, g.spacingExtra||0);
       if(!built){ skipped++; continue; }
 
       const unicodeVal = ch.codePointAt(0);
@@ -2204,6 +2215,10 @@ function onLetterSpacingChanged(newVal, sourceId){
   ['letterSpacing','letterSpacingBuild'].forEach(id=>{
     if(id !== sourceId) document.getElementById(id).value = newVal;
   });
+  // Cập nhật ngay thanh "Xem thử nhanh" ở Bước 3 — trước đây thanh này bỏ qua
+  // hoàn toàn letter spacing nên kéo giá trị không thấy gì thay đổi ở đây.
+  renderQuickPreview();
+
   const alreadyBuilt = document.getElementById('previewWrap').style.display !== 'none';
   if(!alreadyBuilt){
     // Nothing built yet, so there's no preview/font to update in place —
@@ -2314,13 +2329,39 @@ function renderQuickPreview(){
   const text = (document.getElementById('quickPreviewInput')||{value:'abc'}).value||'abc';
   const chars=[...text];
   const CELL=60;
-  el.width=chars.length*CELL; el.height=CELL;
+  // Đọc letter spacing hiện tại (units/em, thang đo giống lúc build font thật)
+  // rồi quy đổi tương đối sang pixel cho khớp tỉ lệ với CELL, để kéo thanh
+  // letter spacing thấy thay đổi ngay ở đây, không cần bấm build font.
+  const lsInput = document.getElementById('letterSpacing') || document.getElementById('letterSpacingBuild');
+  const letterSpacingVal = (lsInput && parseInt(lsInput.value)) || 60;
+  const UPM = 1000;
+  const gapPx = (letterSpacingVal / UPM) * CELL;
+
+  // đo trước tổng chiều rộng cần thiết (mỗi glyph giữ đúng tỉ lệ khung hình gốc)
+  let totalW = 0;
+  const widths = chars.map(ch=>{
+    const g = STATE.glyphs[ch];
+    if(!g || !g.canvas) return CELL*0.6;
+    return CELL * (g.canvas.width / g.canvas.height);
+  });
+  widths.forEach((w,i)=>{
+    const g = STATE.glyphs[chars[i]];
+    const extraPx = ((g && g.spacingExtra) || 0) / UPM * CELL;
+    totalW += w + gapPx + extraPx;
+  });
+
+  el.width = Math.max(1, Math.round(totalW));
+  el.height = CELL;
   const ctx=el.getContext('2d');
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,el.width,el.height);
+
+  let x = 0;
   chars.forEach((ch,i)=>{
     const g=STATE.glyphs[ch];
-    if(!g||!g.canvas) return;
-    ctx.drawImage(g.canvas, i*CELL, 0, CELL, CELL);
+    const w = widths[i];
+    if(g && g.canvas) ctx.drawImage(g.canvas, x, 0, w, CELL);
+    const extraPx = ((g && g.spacingExtra) || 0) / UPM * CELL;
+    x += w + gapPx + extraPx;
   });
 }
 
@@ -2407,6 +2448,8 @@ function exportSession(){
       threshold: g.threshold||128,
       ok: g.ok,
       inkRatio: g.inkRatio||0,
+      yOffset: g.yOffset||0,
+      spacingExtra: g.spacingExtra||0,
     };
   });
   const json=JSON.stringify(session);
@@ -2451,7 +2494,8 @@ function importSession(file){
           rawCvs.width=img.width; rawCvs.height=img.height;
           rawCvs.getContext('2d').drawImage(img,0,0);
           STATE.glyphs[ch]={char:ch,canvas:cvs,rawCanvas:rawCvs,
-            threshold:data.threshold||128,ok:data.ok!==false,inkRatio:data.inkRatio||0,path:null};
+            threshold:data.threshold||128,ok:data.ok!==false,inkRatio:data.inkRatio||0,
+            yOffset:data.yOffset||0,spacingExtra:data.spacingExtra||0,path:null};
           loaded++;
           if(loaded===pending){ buildGlyphReviewGrid(); setStep(3); }
         };
@@ -2575,6 +2619,8 @@ CHARSETS['th'] = TH_CHARSET;
   document.getElementById('quickPreviewInput').addEventListener('keydown', e=>{
     if(e.key==='Enter') renderQuickPreview();
   });
+  document.getElementById('quickPreviewInput').addEventListener('input', ()=> renderQuickPreview());
+  renderQuickPreview(); // vẽ ngay lần đầu, không cần đợi người dùng thao tác
 })();
 
 /* ============================================================
