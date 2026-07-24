@@ -607,6 +607,10 @@
       <div class="progress-bar" id="detectProgressBar"></div>
     </div>
     <div class="log" id="detectLog" style="display:none;"></div>
+    <div class="row" id="confirmStep2Wrap" style="display:none;margin-top:10px;">
+      <button id="btnConfirmStep2" data-vi="✅ Xong, sang Bước 3 (Xem ký tự)" data-en="✅ Done, go to Step 3 (Review glyphs)">✅ Xong, sang Bước 3 (Xem ký tự)</button>
+      <span class="hint" style="margin:0;" data-vi="Có thể upload thêm file khác trước khi bấm, nếu còn thiếu trang" data-en="You can upload more files before clicking this, if pages are still missing">Có thể upload thêm file khác trước khi bấm, nếu còn thiếu trang</span>
+    </div>
   </div>
 
   <!-- STEP 3: REVIEW GLYPHS -->
@@ -912,6 +916,24 @@ const MARGIN = 12;                 // outer margin mm
 const HEADER_H = 14;                // space for page header text mm
 const FOOTER_H = 8;                 // space for footer (page index) mm
 
+// ---- Fiducial corner markers ----
+// 4 solid black squares printed near each page corner. When a page is
+// photographed by hand (tilted, cropped tighter/looser than A4, phone at an
+// angle), we detect these 4 squares in the photo and solve a homography
+// (mm -> photo pixels) from their known positions. Cell crop boxes are then
+// mapped through that homography instead of assuming the photo is a clean,
+// untilted, exact-A4-ratio scan — which is what caused misaligned crops
+// before. If markers can't be found (e.g. an older template without them,
+// or a badly lit photo), we fall back to the old linear-scale method.
+const MARKER_HALF_MM = 2.5;   // half side length of each marker square (5mm square)
+const MARKER_INSET_MM = 7;    // distance from page edge to marker center
+const FIDUCIAL_MM = [
+  { name:'TL', x: MARKER_INSET_MM,          y: MARKER_INSET_MM },
+  { name:'TR', x: PAGE_W - MARKER_INSET_MM, y: MARKER_INSET_MM },
+  { name:'BL', x: MARKER_INSET_MM,          y: PAGE_H - MARKER_INSET_MM },
+  { name:'BR', x: PAGE_W - MARKER_INSET_MM, y: PAGE_H - MARKER_INSET_MM },
+];
+
 function computeGridGeometry(density){
   const {cols, rows} = GRID_LAYOUTS[density];
   const usableW = PAGE_W - MARGIN*2;
@@ -1159,6 +1181,13 @@ function generateTemplatePDF(){
   plan.pages.forEach((pageChars, pIdx)=>{
     if(pIdx>0) doc.addPage();
 
+    // fiducial corner markers — used later to align a hand-photographed
+    // page precisely, regardless of crop/rotation/tilt (see handleUploadedFiles)
+    doc.setFillColor(0,0,0);
+    FIDUCIAL_MM.forEach(m=>{
+      doc.rect(m.x-MARKER_HALF_MM, m.y-MARKER_HALF_MM, MARKER_HALF_MM*2, MARKER_HALF_MM*2, 'F');
+    });
+
     // header
     doc.setFont('helvetica','bold');
     doc.setFontSize(11);
@@ -1298,6 +1327,135 @@ async function detectPageNumberFromCanvas(canvas){
   return null;
 }
 
+// ============================================================
+// Fiducial marker detection + homography (mm -> photo pixels)
+// Lets us align a hand-photographed page (tilted, cropped tighter/looser
+// than A4, shot at an angle) instead of assuming a clean linear A4 scan.
+// ============================================================
+
+// Solve the 3x3 projective homography mapping 4 known source points (mm)
+// to 4 detected destination points (pixels), via direct linear transform.
+// Returns {a,b,c,d,e,f,g,h} such that for a source point (x,y):
+//   X = (a*x + b*y + c) / (g*x + h*y + 1)
+//   Y = (d*x + e*y + f) / (g*x + h*y + 1)
+function computeHomography(src, dst){
+  // Build 8x8 linear system A*p = rhs for unknowns [a,b,c,d,e,f,g,h]
+  const A = [], rhs = [];
+  for(let i=0;i<4;i++){
+    const {x,y} = src[i];
+    const {x:X,y:Y} = dst[i];
+    A.push([x,y,1, 0,0,0, -x*X,-y*X]); rhs.push(X);
+    A.push([0,0,0, x,y,1, -x*Y,-y*Y]); rhs.push(Y);
+  }
+  // Gaussian elimination with partial pivoting
+  const n = 8;
+  for(let col=0; col<n; col++){
+    let piv = col;
+    for(let r=col+1; r<n; r++) if(Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+    if(Math.abs(A[piv][col]) < 1e-9) return null; // degenerate (collinear markers etc.)
+    [A[col],A[piv]] = [A[piv],A[col]];
+    [rhs[col],rhs[piv]] = [rhs[piv],rhs[col]];
+    for(let r=0; r<n; r++){
+      if(r===col) continue;
+      const f = A[r][col]/A[col][col];
+      if(f===0) continue;
+      for(let c=col;c<n;c++) A[r][c] -= f*A[col][c];
+      rhs[r] -= f*rhs[col];
+    }
+  }
+  const p = rhs.map((v,i)=> v/A[i][i]);
+  return { a:p[0],b:p[1],c:p[2],d:p[3],e:p[4],f:p[5],g:p[6],h:p[7] };
+}
+
+function applyHomography(H, x, y){
+  const denom = H.g*x + H.h*y + 1;
+  return { x: (H.a*x + H.b*y + H.c)/denom, y: (H.d*x + H.e*y + H.f)/denom };
+}
+
+// Flood-fill a connected dark blob starting at (x,y) within region-local
+// coordinates; returns its centroid + bounding box, or null if not found/reused.
+function floodFillBlob(gray, w, visited, region, startX, startY, thresh){
+  const rw = region.x1-region.x0, rh = region.y1-region.y0;
+  const stack = [[startX,startY]];
+  visited[startY*rw+startX] = 1;
+  let sumX=0,sumY=0,count=0, minX=startX,maxX=startX,minY=startY,maxY=startY;
+  while(stack.length){
+    const [cx,cy] = stack.pop();
+    sumX+=cx; sumY+=cy; count++;
+    if(cx<minX)minX=cx; if(cx>maxX)maxX=cx;
+    if(cy<minY)minY=cy; if(cy>maxY)maxY=cy;
+    const nbrs = [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]];
+    for(const [nx,ny] of nbrs){
+      if(nx<0||ny<0||nx>=rw||ny>=rh) continue;
+      const nidx = ny*rw+nx;
+      if(visited[nidx]) continue;
+      const gv = gray[(region.y0+ny)*w + (region.x0+nx)];
+      if(gv >= thresh) continue;
+      visited[nidx]=1;
+      stack.push([nx,ny]);
+    }
+  }
+  return { cx:region.x0+sumX/count, cy:region.y0+sumY/count, count, bw:maxX-minX+1, bh:maxY-minY+1 };
+}
+
+// Search one corner quadrant of the photo for the darkest square-ish blob
+// that plausibly is a printed fiducial marker (filled, ~square, small
+// relative to the quadrant). Tries a few thresholds to cope with lighting.
+function findDarkestSquareBlob(gray, w, h, region){
+  const rw = region.x1-region.x0, rh = region.y1-region.y0;
+  if(rw<=0||rh<=0) return null;
+  for(const thresh of [80,105,130]){
+    const visited = new Uint8Array(rw*rh);
+    let best = null;
+    for(let y=0;y<rh;y++){
+      for(let x=0;x<rw;x++){
+        const idx = y*rw+x;
+        if(visited[idx]) continue;
+        const gv = gray[(region.y0+y)*w + (region.x0+x)];
+        if(gv >= thresh) continue;
+        const blob = floodFillBlob(gray, w, visited, region, x, y, thresh);
+        const boxArea = blob.bw*blob.bh;
+        const fillRatio = blob.count/boxArea;
+        const aspect = blob.bw/blob.bh;
+        const minSide = Math.min(rw,rh);
+        if(fillRatio>0.55 && aspect>0.6 && aspect<1.6 &&
+           blob.bw>=minSide*0.015 && blob.bw<=minSide*0.6){
+          if(!best || blob.count>best.count) best = blob;
+        }
+      }
+    }
+    if(best) return { x:best.cx, y:best.cy };
+  }
+  return null;
+}
+
+// Try to locate the 4 printed corner markers in a photographed/rendered
+// page canvas. Returns {TL,TR,BL,BR} pixel points, or null if any marker
+// couldn't be found reliably (caller should fall back to linear scaling).
+function findFiducialMarkers(canvas){
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0,0,w,h).data;
+  const gray = new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++){
+    gray[i] = 0.299*imgData[i*4] + 0.587*imgData[i*4+1] + 0.114*imgData[i*4+2];
+  }
+  const qf = 0.28; // search each corner within this fraction of the page
+  const quadrants = {
+    TL: { x0:0,               y0:0,               x1:Math.round(w*qf), y1:Math.round(h*qf) },
+    TR: { x0:Math.round(w*(1-qf)), y0:0,           x1:w,                 y1:Math.round(h*qf) },
+    BL: { x0:0,               y0:Math.round(h*(1-qf)), x1:Math.round(w*qf), y1:h },
+    BR: { x0:Math.round(w*(1-qf)), y0:Math.round(h*(1-qf)), x1:w, y1:h },
+  };
+  const found = {};
+  for(const name of ['TL','TR','BL','BR']){
+    const blob = findDarkestSquareBlob(gray, w, h, quadrants[name]);
+    if(!blob) return null; // any missing marker -> caller falls back
+    found[name] = blob;
+  }
+  return found;
+}
+
 async function handleUploadedFiles(fileList){
   if(!STATE.template){
     logDetect(t('⚠️ Chưa có template (Bước 1). Hãy tạo template trước.','⚠️ No template yet (Step 1). Please generate a template first.'));
@@ -1425,16 +1583,51 @@ async function handleUploadedFiles(fileList){
       const geo = STATE.template.geo;
       const pxPerMmActual = canvas.width / PAGE_W;
 
+      // Prefer aligning via the 4 printed corner markers: this handles a
+      // hand-photographed page that's tilted, rotated, or cropped tighter
+      // or looser than a clean A4 ratio — the case that caused misaligned
+      // crops before. Falls back to the old fixed-ratio scaling only if
+      // markers can't be found (e.g. an older template printed without them).
+      const markers = findFiducialMarkers(canvas);
+      let homography = null;
+      if(markers){
+        homography = computeHomography(
+          FIDUCIAL_MM.map(m=>({x:m.x,y:m.y})),
+          ['TL','TR','BL','BR'].map(k=>markers[k])
+        );
+      }
+      if(homography){
+        logDetect(t('  📐 Đã nhận diện 4 điểm mốc góc trang — căn chỉnh theo ảnh chụp thực tế.','  📐 Detected the 4 corner markers — aligning to the actual photo.'));
+      } else {
+        logDetect(t('  ⚠️ Không tìm thấy điểm mốc góc (template cũ hoặc ảnh mờ) — dùng cách căn chỉnh cũ theo tỉ lệ A4.','  ⚠️ Corner markers not found (older template or blurry photo) — using the old fixed A4-ratio alignment.'));
+      }
+
       pageChars.forEach((ch, i)=>{
         const cell = geo.cells[i];
-        const cropX = Math.round(cell.x * pxPerMmActual);
-        const cropY = Math.round(cell.y * pxPerMmActual);
-        const cropW = Math.round(cell.w * pxPerMmActual);
-        const cropH = Math.round(cell.h * pxPerMmActual);
+        let cropX, cropY, cropW, cropH;
+        if(homography){
+          const corners = [
+            {x:cell.x,          y:cell.y},
+            {x:cell.x+cell.w,   y:cell.y},
+            {x:cell.x,          y:cell.y+cell.h},
+            {x:cell.x+cell.w,   y:cell.y+cell.h},
+          ].map(p=>applyHomography(homography, p.x, p.y));
+          const xs = corners.map(p=>p.x), ys = corners.map(p=>p.y);
+          cropX = Math.round(Math.min(...xs));
+          cropY = Math.round(Math.min(...ys));
+          cropW = Math.round(Math.max(...xs) - Math.min(...xs));
+          cropH = Math.round(Math.max(...ys) - Math.min(...ys));
+        } else {
+          cropX = Math.round(cell.x * pxPerMmActual);
+          cropY = Math.round(cell.y * pxPerMmActual);
+          cropW = Math.round(cell.w * pxPerMmActual);
+          cropH = Math.round(cell.h * pxPerMmActual);
+        }
 
         // shrink crop slightly inward to avoid capturing the cell border itself
+        cropW = Math.max(4, cropW); cropH = Math.max(4, cropH);
         const inset = Math.round(Math.min(cropW,cropH) * 0.035);
-        const cx = cropX+inset, cy = cropY+inset, cw = cropW-inset*2, ch_ = cropH-inset*2;
+        const cx = cropX+inset, cy = cropY+inset, cw = Math.max(1,cropW-inset*2), ch_ = Math.max(1,cropH-inset*2);
 
         const cropCanvas = document.createElement('canvas');
         cropCanvas.width = cw; cropCanvas.height = ch_;
@@ -1485,8 +1678,16 @@ async function handleUploadedFiles(fileList){
   }
 
   invalidateBuild();
-  setTimeout(()=>{ buildGlyphReviewGrid(); setStep(3); }, 400);
+  // Don't auto-jump to Step 3 — the person may be uploading files one at a
+  // time (e.g. photographing pages individually) and needs the chance to
+  // add more before moving on. Just reveal the confirm button instead.
+  document.getElementById('confirmStep2Wrap').style.display = 'flex';
 }
+
+document.getElementById('btnConfirmStep2').addEventListener('click', ()=>{
+  buildGlyphReviewGrid();
+  setStep(3);
+});
 
 // Convert a drawn cell (white bg, dark ink) into binary ink mask + ink ratio
 // Gaussian blur kernel (radius 1, 3x3) applied in-place on grayscale luminance
